@@ -6,6 +6,8 @@ from collections.abc import Sequence
 from functools import cache
 from typing import Final
 
+import numpy as np
+
 from .construction import (
     BLOCK_PATTERN,
     ConstructionPlan,
@@ -13,7 +15,11 @@ from .construction import (
     evolve_construction,
     plan_block,
 )
-from .simulator import Board, Pattern, Point, SimulationConfig
+from .simulator import (
+    Pattern,
+    Point,
+    _step_array,  # type: ignore[reportPrivateUsage]
+)
 
 Glyph = tuple[str, ...]
 BLOCK_TEXT_STRIDE: Final[int] = 6
@@ -476,12 +482,8 @@ def _pack_block_plans(
     for origin in ordered_origins:
         orientation = _block_orientation(origin, center=center)
         for extra_periods in range(_MAX_PACK_SLOT + 1):
-            candidate = plan_block(
-                origin, orientation=orientation, extra_periods=extra_periods
-            )
-            candidate_footprint = _block_construction_footprint(
-                orientation, extra_periods, origin
-            )
+            candidate = plan_block(origin, orientation=orientation, extra_periods=extra_periods)
+            candidate_footprint = _block_construction_footprint(orientation, extra_periods, origin)
 
             touching = [
                 placed_plan
@@ -493,9 +495,10 @@ def _pack_block_plans(
                 break
 
             tentative = combine_plans([*touching, candidate])
-            expected = frozenset[Point]().union(
-                *(p.target_cells for p in touching)
-            ) | candidate.target_cells
+            expected = (
+                frozenset[Point]().union(*(p.target_cells for p in touching))
+                | candidate.target_cells
+            )
             if evolve_construction(tentative) == expected:
                 placed.append((candidate, candidate_footprint))
                 break
@@ -510,24 +513,29 @@ def _base_construction_footprint(orientation: str, extra_periods: int) -> frozen
     """Return the Moore-expanded swept cells for one block construction at origin (0, 0)."""
 
     plan = plan_block((0, 0), orientation=orientation, extra_periods=extra_periods)
-    swept: set[Point] = set(plan.target_cells)
     if plan.initial_cells:
         min_x = min(x for x, _ in plan.initial_cells)
         min_y = min(y for _, y in plan.initial_cells)
         max_x = max(x for x, _ in plan.initial_cells)
         max_y = max(y for _, y in plan.initial_cells)
         padding = plan.generations + 4
-        config = SimulationConfig(
-            width=max_x - min_x + 1 + padding * 2,
-            height=max_y - min_y + 1 + padding * 2,
-            wrap=False,
-        )
-        shifted = {(x - min_x + padding, y - min_y + padding) for x, y in plan.initial_cells}
-        board = Board.from_points(config, shifted)
-        for _ in range(plan.generations + 1):
-            for x, y in board.live_cells:
-                swept.add((x + min_x - padding, y + min_y - padding))
-            board = board.step()
+        height = max_y - min_y + 1 + padding * 2
+        width = max_x - min_x + 1 + padding * 2
+        grid = np.zeros((height, width), dtype=np.bool_)
+        for x, y in plan.initial_cells:
+            grid[y - min_y + padding, x - min_x + padding] = True
+        swept_arr = grid.copy()
+        for _ in range(plan.generations):
+            grid = _step_array(grid, wrap=False)
+            swept_arr |= grid
+        ys, xs = np.nonzero(swept_arr)
+        swept: set[Point] = {
+            (int(x) + min_x - padding, int(y) + min_y - padding)
+            for x, y in zip(xs, ys, strict=True)
+        }
+    else:
+        swept = set()
+    swept |= set(plan.target_cells)
     expanded: set[Point] = set()
     for x, y in swept:
         for dx in (-1, 0, 1):

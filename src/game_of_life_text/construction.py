@@ -238,9 +238,7 @@ def evolve_construction(plan: ConstructionPlan) -> Pattern:
         wrap=False,
     )
     shifted = {(x - min_x + padding, y - min_y + padding) for x, y in plan.initial_cells}
-    board = Board.from_points(config, shifted)
-    for _ in range(plan.generations):
-        board = board.step()
+    board = Board.from_points(config, shifted).step_n(plan.generations)
     return frozenset((x + min_x - padding, y + min_y - padding) for x, y in board.live_cells)
 
 

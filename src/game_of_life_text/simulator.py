@@ -1,28 +1,17 @@
-"""Core simulation types and helpers."""
+"""Core simulation types and helpers backed by a NumPy stepper."""
 
 from __future__ import annotations
 
-from collections import Counter
 from collections.abc import Iterable
 from random import Random
-from typing import Final, Self
+from typing import Self
 
+import numpy as np
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 type Point = tuple[int, int]
 type Pattern = frozenset[Point]
 type LiveCells = frozenset[Point]
-
-NEIGHBOR_OFFSETS: Final[tuple[Point, ...]] = (
-    (-1, -1),
-    (0, -1),
-    (1, -1),
-    (-1, 0),
-    (1, 0),
-    (-1, 1),
-    (0, 1),
-    (1, 1),
-)
 
 
 class SimulationConfig(BaseModel):
@@ -83,30 +72,24 @@ class Board(BaseModel):
     def step(self) -> Board:
         """Advance the board by one generation."""
 
-        neighbor_counts: Counter[Point] = Counter()
-        for cell in self.live_cells:
-            for neighbor in self._iter_neighbors(cell):
-                neighbor_counts[neighbor] += 1
+        return self.step_n(1)
 
-        next_cells = frozenset(
-            cell
-            for cell, count in neighbor_counts.items()
-            if count == 3 or (count == 2 and cell in self.live_cells)
-        )
+    def step_n(self, generations: int) -> Board:
+        """Advance the board by ``generations`` generations using vectorized stepping."""
+
+        if generations < 0:
+            msg = "generations must be non-negative"
+            raise ValueError(msg)
+        if generations == 0:
+            return self
+
+        grid = _cells_to_array(self.config, self.live_cells)
+        grid = _step_array_n(grid, generations, wrap=self.config.wrap)
         return Board(
             config=self.config,
-            live_cells=next_cells,
-            generation=self.generation + 1,
+            live_cells=_array_to_cells(grid),
+            generation=self.generation + generations,
         )
-
-    def _iter_neighbors(self, point: Point) -> Iterable[Point]:
-        """Yield all valid neighboring points for a cell."""
-
-        x, y = point
-        for dx, dy in NEIGHBOR_OFFSETS:
-            normalized = _normalize_point(self.config, (x + dx, y + dy))
-            if normalized is not None:
-                yield normalized
 
 
 def centered_cells(config: SimulationConfig, pattern: Pattern) -> LiveCells:
@@ -143,15 +126,61 @@ def random_cells(config: SimulationConfig, density: float, *, seed: int | None =
     )
 
 
-def _normalize_point(config: SimulationConfig, point: Point) -> Point | None:
-    """Translate a point to a valid board coordinate."""
+def _cells_to_array(config: SimulationConfig, cells: Iterable[Point]) -> np.ndarray:
+    """Convert a sparse cell set into a (height, width) bool array."""
 
-    x, y = point
-    if config.wrap:
-        return (x % config.width, y % config.height)
-    if _is_in_bounds(config, point):
-        return point
-    return None
+    grid = np.zeros((config.height, config.width), dtype=np.bool_)
+    for x, y in cells:
+        grid[y, x] = True
+    return grid
+
+
+def _array_to_cells(grid: np.ndarray) -> LiveCells:
+    """Convert a (height, width) bool array back to a frozenset of (x, y) points."""
+
+    ys, xs = np.nonzero(grid)
+    return frozenset(zip(xs.tolist(), ys.tolist(), strict=True))
+
+
+def _step_array(grid: np.ndarray, *, wrap: bool) -> np.ndarray:
+    """Apply one Game of Life generation to a 2D bool array."""
+
+    return _step_array_n(grid, 1, wrap=wrap)
+
+
+def _step_array_n(grid: np.ndarray, generations: int, *, wrap: bool) -> np.ndarray:
+    """Apply ``generations`` Game of Life steps using a single set of pre-allocated buffers."""
+
+    if generations <= 0:
+        return grid
+    height, width = grid.shape
+    padded = np.zeros((height + 2, width + 2), dtype=np.int8)
+    neighbors = np.empty((height, width), dtype=np.int8)
+    current = grid
+    for _ in range(generations):
+        if wrap:
+            padded[1:-1, 1:-1] = current
+            padded[0, 1:-1] = current[-1, :]
+            padded[-1, 1:-1] = current[0, :]
+            padded[1:-1, 0] = current[:, -1]
+            padded[1:-1, -1] = current[:, 0]
+            padded[0, 0] = current[-1, -1]
+            padded[0, -1] = current[-1, 0]
+            padded[-1, 0] = current[0, -1]
+            padded[-1, -1] = current[0, 0]
+        else:
+            padded[1:-1, 1:-1] = current
+
+        np.copyto(neighbors, padded[0:height, 0:width])
+        neighbors += padded[0:height, 1 : width + 1]
+        neighbors += padded[0:height, 2 : width + 2]
+        neighbors += padded[1 : height + 1, 0:width]
+        neighbors += padded[1 : height + 1, 2 : width + 2]
+        neighbors += padded[2 : height + 2, 0:width]
+        neighbors += padded[2 : height + 2, 1 : width + 1]
+        neighbors += padded[2 : height + 2, 2 : width + 2]
+        current = (neighbors == 3) | ((neighbors == 2) & current)
+    return current
 
 
 def _is_in_bounds(config: SimulationConfig, point: Point) -> bool:
