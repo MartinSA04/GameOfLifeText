@@ -16,6 +16,7 @@ dependencies = [
 [project.scripts]
 game-of-life-gui = "game_of_life_text.gui:main"
 gol-gui = "game_of_life_text.gui:main"
+lineprofile-generator = "game_of_life_text.profile_generator:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -24,6 +25,7 @@ build-backend = "hatchling.build"
 [dependency-groups]
 dev = [
     "hatchling>=1.29.0",
+    "line-profiler>=5.0.2",
     "pytest>=9.0.3",
     "ruff>=0.15.12",
     "ty>=0.0.32",
