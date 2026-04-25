@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Sequence
 from functools import cache
-from typing import Final, NamedTuple
+from typing import Final
 
 from .construction import (
     BLOCK_PATTERN,
@@ -410,9 +410,10 @@ def render_text_block_pattern(text: str) -> Pattern:
 def render_text_block_construction(text: str) -> ConstructionPlan:
     """Return a deterministic glider seed plan that settles into block text.
 
-    Each block is packed into the smallest launch period whose (cell, generation)
-    glider footprint does not collide with any block already placed, so blocks
-    in disjoint regions of the text settle in parallel rather than in series.
+    Builds blocks outward from the text center using the same outward launch
+    direction as the original sequential planner. Each block claims the smallest
+    launch period whose glider trajectory does not collide with any already-placed
+    block, so distant blocks share a slot and settle in parallel.
     """
 
     normalized_text = _normalize_text(text)
@@ -433,9 +434,7 @@ def render_text_block_construction(text: str) -> ConstructionPlan:
         ),
     )
 
-    plan = combine_plans(
-        _pack_block_plans(ordered_origins, center=(center_x, center_y))
-    )
+    plan = combine_plans(_pack_block_plans(ordered_origins, center=(center_x, center_y)))
     if evolve_construction(plan) != target_cells:
         msg = "deterministic block-text construction verification failed; try shorter text"
         raise ValueError(msg)
@@ -456,136 +455,95 @@ def glyph_for_character(character: str) -> Glyph:
     return FONT_5X7[normalized]
 
 
-class _BlockTimeline(NamedTuple):
-    """The (cell, generation) footprint of one block construction with adjacency margin."""
-
-    cells_at_gen: tuple[frozenset[Point], ...]
-    settled_cells: frozenset[Point]
-
-
 def _pack_block_plans(
     ordered_origins: Sequence[Point],
     *,
     center: tuple[float, float],
 ) -> list[ConstructionPlan]:
-    """Pack each block into the smallest non-conflicting (slot, orientation) pair.
+    """Place each block at the smallest launch period that keeps all glider paths apart.
 
-    Adjacent blocks often have a chain of constraints where one block's choice cuts
-    off every option for a later block. We use bounded depth-first backtracking:
-    when no (slot, orientation) fits the current block, we undo the most recent
-    placement and try its next option.
+    Blocks are placed in distance-from-center order with the same outward launch
+    direction the original sequential planner picked. For each block we sweep
+    extra_periods upward and accept the first value whose Moore-expanded swept
+    cells are spatially disjoint from every already-placed block — those blocks
+    are guaranteed independent and run in parallel. When a candidate's
+    footprint touches an existing block we verify by simulating the candidate
+    together with the touching subset; non-touching blocks cannot disturb the
+    result and can be ignored, keeping the verification small.
     """
 
-    preferences_by_origin = {
-        origin: _block_orientation_preferences(origin, center=center)
-        for origin in ordered_origins
-    }
-    placed: list[tuple[ConstructionPlan, _BlockTimeline]] = []
-    budget = [len(ordered_origins) * 64]
-
-    def fits(timeline: _BlockTimeline) -> bool:
-        return all(not _timelines_conflict(timeline, other) for _, other in placed)
-
-    def backtrack(idx: int) -> bool:
-        if idx == len(ordered_origins):
-            return True
-        if budget[0] <= 0:
-            return False
-        budget[0] -= 1
-
-        origin = ordered_origins[idx]
+    placed: list[tuple[ConstructionPlan, frozenset[Point]]] = []
+    for origin in ordered_origins:
+        orientation = _block_orientation(origin, center=center)
         for extra_periods in range(_MAX_PACK_SLOT + 1):
-            for orientation in preferences_by_origin[origin]:
-                candidate_timeline = _translate_timeline(
-                    _base_block_timeline(orientation, extra_periods),
-                    origin,
-                )
-                if not fits(candidate_timeline):
-                    continue
-                candidate_plan = plan_block(
-                    origin, orientation=orientation, extra_periods=extra_periods
-                )
-                placed.append((candidate_plan, candidate_timeline))
-                if backtrack(idx + 1):
-                    return True
-                placed.pop()
-                if budget[0] <= 0:
-                    return False
-        return False
+            candidate = plan_block(
+                origin, orientation=orientation, extra_periods=extra_periods
+            )
+            candidate_footprint = _block_construction_footprint(
+                orientation, extra_periods, origin
+            )
 
-    if not backtrack(0):
-        msg = "could not pack block-text construction within search budget"
-        raise ValueError(msg)
+            touching = [
+                placed_plan
+                for placed_plan, placed_fp in placed
+                if not placed_fp.isdisjoint(candidate_footprint)
+            ]
+            if not touching:
+                placed.append((candidate, candidate_footprint))
+                break
+
+            tentative = combine_plans([*touching, candidate])
+            expected = frozenset[Point]().union(
+                *(p.target_cells for p in touching)
+            ) | candidate.target_cells
+            if evolve_construction(tentative) == expected:
+                placed.append((candidate, candidate_footprint))
+                break
+        else:
+            msg = f"could not pack block at {origin!r} within {_MAX_PACK_SLOT} slots"
+            raise ValueError(msg)
     return [plan for plan, _ in placed]
 
 
 @cache
-def _base_block_timeline(orientation: str, extra_periods: int) -> _BlockTimeline:
-    """Return the per-generation footprint of one block construction at origin (0, 0)."""
+def _base_construction_footprint(orientation: str, extra_periods: int) -> frozenset[Point]:
+    """Return the Moore-expanded swept cells for one block construction at origin (0, 0)."""
 
     plan = plan_block((0, 0), orientation=orientation, extra_periods=extra_periods)
-    settled_cells = _expand_with_adjacency(plan.target_cells)
-    if not plan.initial_cells:
-        return _BlockTimeline(cells_at_gen=(), settled_cells=settled_cells)
-
-    min_x = min(x for x, _ in plan.initial_cells)
-    min_y = min(y for _, y in plan.initial_cells)
-    max_x = max(x for x, _ in plan.initial_cells)
-    max_y = max(y for _, y in plan.initial_cells)
-    padding = plan.generations + 4
-    config = SimulationConfig(
-        width=max_x - min_x + 1 + padding * 2,
-        height=max_y - min_y + 1 + padding * 2,
-        wrap=False,
-    )
-    shifted = {(x - min_x + padding, y - min_y + padding) for x, y in plan.initial_cells}
-    board = Board.from_points(config, shifted)
-
-    cells_at_gen: list[frozenset[Point]] = []
-    for _ in range(plan.generations + 1):
-        live_real = ((x + min_x - padding, y + min_y - padding) for x, y in board.live_cells)
-        cells_at_gen.append(_expand_with_adjacency(live_real))
-        board = board.step()
-
-    return _BlockTimeline(cells_at_gen=tuple(cells_at_gen), settled_cells=settled_cells)
-
-
-def _translate_timeline(timeline: _BlockTimeline, origin: Point) -> _BlockTimeline:
-    """Shift a base timeline by ``origin``."""
-
-    offset_x, offset_y = origin
-    return _BlockTimeline(
-        cells_at_gen=tuple(
-            frozenset((x + offset_x, y + offset_y) for x, y in cells)
-            for cells in timeline.cells_at_gen
-        ),
-        settled_cells=frozenset(
-            (x + offset_x, y + offset_y) for x, y in timeline.settled_cells
-        ),
-    )
-
-
-def _expand_with_adjacency(cells: Iterable[Point]) -> frozenset[Point]:
-    """Return ``cells`` plus every Moore neighbor of each cell."""
-
+    swept: set[Point] = set(plan.target_cells)
+    if plan.initial_cells:
+        min_x = min(x for x, _ in plan.initial_cells)
+        min_y = min(y for _, y in plan.initial_cells)
+        max_x = max(x for x, _ in plan.initial_cells)
+        max_y = max(y for _, y in plan.initial_cells)
+        padding = plan.generations + 4
+        config = SimulationConfig(
+            width=max_x - min_x + 1 + padding * 2,
+            height=max_y - min_y + 1 + padding * 2,
+            wrap=False,
+        )
+        shifted = {(x - min_x + padding, y - min_y + padding) for x, y in plan.initial_cells}
+        board = Board.from_points(config, shifted)
+        for _ in range(plan.generations + 1):
+            for x, y in board.live_cells:
+                swept.add((x + min_x - padding, y + min_y - padding))
+            board = board.step()
     expanded: set[Point] = set()
-    for x, y in cells:
+    for x, y in swept:
         for dx in (-1, 0, 1):
             for dy in (-1, 0, 1):
                 expanded.add((x + dx, y + dy))
     return frozenset(expanded)
 
 
-def _timelines_conflict(a: _BlockTimeline, b: _BlockTimeline) -> bool:
-    """Return whether two block timelines have an active cell in common at the same gen."""
+def _block_construction_footprint(
+    orientation: str, extra_periods: int, origin: Point
+) -> frozenset[Point]:
+    """Translate the cached base footprint to ``origin``."""
 
-    horizon = max(len(a.cells_at_gen), len(b.cells_at_gen))
-    for t in range(horizon):
-        a_cells = a.cells_at_gen[t] if t < len(a.cells_at_gen) else a.settled_cells
-        b_cells = b.cells_at_gen[t] if t < len(b.cells_at_gen) else b.settled_cells
-        if not a_cells.isdisjoint(b_cells):
-            return True
-    return not a.settled_cells.isdisjoint(b.settled_cells)
+    base = _base_construction_footprint(orientation, extra_periods)
+    offset_x, offset_y = origin
+    return frozenset((x + offset_x, y + offset_y) for x, y in base)
 
 
 def _normalize_text(text: str) -> str:
@@ -637,23 +595,15 @@ def _extract_block_origins(pattern: Pattern) -> tuple[Point, ...]:
     return tuple(origins)
 
 
-def _block_orientation_preferences(
-    origin: Point,
-    *,
-    center: tuple[float, float],
-) -> tuple[str, ...]:
-    """Return the four launch directions, outward-first, for one block."""
+def _block_orientation(origin: Point, *, center: tuple[float, float]) -> str:
+    """Return the deterministic outward launch direction for one block."""
 
     center_x, center_y = center
     delta_x = origin[0] + 0.5 - center_x
     delta_y = origin[1] + 0.5 - center_y
-    horizontal = "east" if delta_x >= 0 else "west"
-    vertical = "south" if delta_y >= 0 else "north"
-    primary, secondary = (
-        (horizontal, vertical) if abs(delta_x) >= abs(delta_y) else (vertical, horizontal)
-    )
-    rest = tuple(d for d in ("east", "west", "north", "south") if d not in {primary, secondary})
-    return (primary, secondary, *rest)
+    if abs(delta_x) >= abs(delta_y):
+        return "east" if delta_x >= 0 else "west"
+    return "south" if delta_y >= 0 else "north"
 
 
 def _block_distance_squared(origin: Point, *, center: tuple[float, float]) -> float:
