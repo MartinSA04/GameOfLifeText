@@ -1,73 +1,199 @@
-"""Core simulation types and helpers backed by a NumPy stepper."""
+"""Core simulation types and helpers backed directly by NumPy arrays."""
 
 from __future__ import annotations
 
-from collections.abc import Iterable
-from random import Random
-from typing import Self
+from collections.abc import Iterable, Iterator
+from dataclasses import dataclass
 
 import numpy as np
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+import numpy.typing as npt
 
 type Point = tuple[int, int]
-type Pattern = frozenset[Point]
-type LiveCells = frozenset[Point]
+type BoolGrid = npt.NDArray[np.bool_]
+type PointArray = npt.NDArray[np.int32]
 
 
-class SimulationConfig(BaseModel):
+@dataclass(frozen=True, slots=True)
+class SimulationConfig:
     """Size and edge behavior for a board."""
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
-
-    width: int = Field(gt=0)
-    height: int = Field(gt=0)
+    width: int
+    height: int
     wrap: bool = True
 
+    def __post_init__(self) -> None:
+        if self.width <= 0:
+            msg = "width must be greater than 0"
+            raise ValueError(msg)
+        if self.height <= 0:
+            msg = "height must be greater than 0"
+            raise ValueError(msg)
 
-class Board(BaseModel):
-    """An immutable Game of Life board state."""
 
-    model_config = ConfigDict(extra="forbid", frozen=True)
+@dataclass(frozen=True, slots=True, eq=False)
+class Pattern:
+    """A canonical NumPy-backed collection of unique ``(x, y)`` points."""
+
+    _points: PointArray
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "_points", _normalize_points(self._points))
+
+    @classmethod
+    def empty(cls) -> Pattern:
+        """Return an empty pattern."""
+
+        return cls(_empty_points())
+
+    @classmethod
+    def from_points(cls, points: Iterable[Point]) -> Pattern:
+        """Build a pattern from any iterable of points."""
+
+        return cls(_points_from_iterable(points))
+
+    @classmethod
+    def from_grid(cls, grid: BoolGrid) -> Pattern:
+        """Build a pattern from a boolean grid."""
+
+        ys, xs = np.nonzero(grid)
+        if xs.size == 0:
+            return cls.empty()
+        return cls(np.column_stack((xs, ys)).astype(np.int32, copy=False))
+
+    @classmethod
+    def merge(cls, *patterns: Pattern) -> Pattern:
+        """Union several patterns into one canonical pattern."""
+
+        arrays = [pattern.points for pattern in patterns if pattern]
+        if not arrays:
+            return cls.empty()
+        return cls(np.concatenate(arrays, axis=0))
+
+    @property
+    def points(self) -> PointArray:
+        """Return the underlying read-only ``(x, y)`` array."""
+
+        return self._points
+
+    def __bool__(self) -> bool:
+        return self._points.shape[0] > 0
+
+    def __len__(self) -> int:
+        return int(self._points.shape[0])
+
+    def __iter__(self) -> Iterator[Point]:
+        for point in self._points:
+            yield (int(point[0]), int(point[1]))
+
+    def __contains__(self, point: object) -> bool:
+        if not isinstance(point, tuple) or len(point) != 2:
+            return False
+        if not self:
+            return False
+        x, y = point
+        return bool(np.any((self._points[:, 0] == x) & (self._points[:, 1] == y)))
+
+    def __eq__(self, other: object) -> bool:
+        if not isinstance(other, Pattern):
+            return NotImplemented
+        return np.array_equal(self._points, other._points)
+
+    def bounds(self) -> tuple[int, int, int, int]:
+        """Return ``(min_x, min_y, max_x, max_y)`` for the pattern."""
+
+        if not self:
+            msg = "pattern is empty"
+            raise ValueError(msg)
+        mins = self._points.min(axis=0)
+        maxs = self._points.max(axis=0)
+        return (int(mins[0]), int(mins[1]), int(maxs[0]), int(maxs[1]))
+
+    def translated(self, offset_x: int, offset_y: int) -> Pattern:
+        """Return a translated copy of the pattern."""
+
+        if not self:
+            return Pattern.empty()
+        offset = np.array((offset_x, offset_y), dtype=np.int32)
+        return Pattern(self._points + offset)
+
+    def clipped_to(self, config: SimulationConfig) -> Pattern:
+        """Return only the points inside ``config``."""
+
+        if not self:
+            return self
+        mask = (
+            (self._points[:, 0] >= 0)
+            & (self._points[:, 0] < config.width)
+            & (self._points[:, 1] >= 0)
+            & (self._points[:, 1] < config.height)
+        )
+        if bool(np.all(mask)):
+            return self
+        return Pattern(self._points[mask])
+
+    def isdisjoint(self, other: Pattern) -> bool:
+        """Return whether two patterns share no points."""
+
+        if not self or not other:
+            return True
+        self_view = _structured_points_view(self._points)
+        other_view = _structured_points_view(other._points)
+        overlap = np.intersect1d(self_view, other_view, assume_unique=True)
+        return overlap.size == 0
+
+
+@dataclass(frozen=True, slots=True, eq=False)
+class Board:
+    """An immutable Game of Life board state backed by a boolean grid."""
 
     config: SimulationConfig
-    live_cells: LiveCells
-    generation: int = Field(default=0, ge=0)
+    grid: BoolGrid
+    generation: int = 0
 
-    @model_validator(mode="after")
-    def validate_live_cells(self) -> Self:
-        """Ensure the board state is internally consistent."""
-
-        invalid_point = next(
-            (point for point in self.live_cells if not _is_in_bounds(self.config, point)),
-            None,
-        )
-        if invalid_point is not None:
-            msg = f"point {invalid_point!r} is outside the board"
+    def __post_init__(self) -> None:
+        grid = np.asarray(self.grid, dtype=np.bool_)
+        expected_shape = (self.config.height, self.config.width)
+        if grid.shape != expected_shape:
+            msg = f"grid shape {grid.shape!r} does not match expected {expected_shape!r}"
             raise ValueError(msg)
-        return self
+        if self.generation < 0:
+            msg = "generation must be non-negative"
+            raise ValueError(msg)
+        normalized = np.array(grid, dtype=np.bool_, copy=True)
+        normalized.setflags(write=False)
+        object.__setattr__(self, "grid", normalized)
+
+    @property
+    def live_cells(self) -> Pattern:
+        """Return the current live cells as a canonical point pattern."""
+
+        return Pattern.from_grid(self.grid)
 
     @property
     def alive_count(self) -> int:
         """Return the number of live cells."""
 
-        return len(self.live_cells)
+        return int(np.count_nonzero(self.grid))
 
     @classmethod
     def from_points(
         cls,
         config: SimulationConfig,
-        points: Iterable[Point],
+        points: Pattern | Iterable[Point],
         *,
         generation: int = 0,
-    ) -> Self:
+    ) -> Board:
         """Create a board from any iterable of points."""
 
-        return cls(config=config, live_cells=frozenset(points), generation=generation)
+        return cls(config=config, grid=_cells_to_array(config, points), generation=generation)
 
     def is_alive(self, point: Point) -> bool:
         """Return whether a point is alive on the board."""
 
-        return point in self.live_cells
+        x, y = point
+        if not _is_in_bounds(self.config, point):
+            return False
+        return bool(self.grid[y, x])
 
     def step(self) -> Board:
         """Advance the board by one generation."""
@@ -83,73 +209,67 @@ class Board(BaseModel):
         if generations == 0:
             return self
 
-        grid = _cells_to_array(self.config, self.live_cells)
-        grid = _step_array_n(grid, generations, wrap=self.config.wrap)
-        return Board(
-            config=self.config,
-            live_cells=_array_to_cells(grid),
-            generation=self.generation + generations,
-        )
+        grid = _step_array_n(self.grid, generations, wrap=self.config.wrap)
+        return Board(config=self.config, grid=grid, generation=self.generation + generations)
 
 
-def centered_cells(config: SimulationConfig, pattern: Pattern) -> LiveCells:
+def centered_cells(config: SimulationConfig, pattern: Pattern) -> Pattern:
     """Return a centered copy of a preset pattern, clipped to the board."""
 
     if not pattern:
-        return frozenset()
+        return Pattern.empty()
 
-    min_x = min(x for x, _ in pattern)
-    min_y = min(y for _, y in pattern)
-    normalized_pattern = frozenset((x - min_x, y - min_y) for x, y in pattern)
-    width = max(x for x, _ in normalized_pattern) + 1
-    height = max(y for _, y in normalized_pattern) + 1
+    min_x, min_y, max_x, max_y = pattern.bounds()
+    normalized_pattern = pattern.translated(-min_x, -min_y)
+    width = max_x - min_x + 1
+    height = max_y - min_y + 1
     offset_x = (config.width - width) // 2
     offset_y = (config.height - height) // 2
-
-    return frozenset(
-        (offset_x + x, offset_y + y)
-        for x, y in normalized_pattern
-        if _is_in_bounds(config, (offset_x + x, offset_y + y))
-    )
+    return normalized_pattern.translated(offset_x, offset_y).clipped_to(config)
 
 
-def random_cells(config: SimulationConfig, density: float, *, seed: int | None = None) -> LiveCells:
+def random_cells(config: SimulationConfig, density: float, *, seed: int | None = None) -> Pattern:
     """Generate a reproducible random board using the requested density."""
 
     if not 0.0 <= density <= 1.0:
         msg = "density must be between 0.0 and 1.0"
         raise ValueError(msg)
 
-    rng = Random(seed)
-    return frozenset(
-        (x, y) for y in range(config.height) for x in range(config.width) if rng.random() < density
-    )
+    rng = np.random.default_rng(seed)
+    grid = rng.random((config.height, config.width)) < density
+    return Pattern.from_grid(grid)
 
 
-def _cells_to_array(config: SimulationConfig, cells: Iterable[Point]) -> np.ndarray:
-    """Convert a sparse cell set into a (height, width) bool array."""
+def _cells_to_array(config: SimulationConfig, cells: Pattern | Iterable[Point]) -> BoolGrid:
+    """Convert sparse live cells into a ``(height, width)`` bool array."""
 
     grid = np.zeros((config.height, config.width), dtype=np.bool_)
-    for x, y in cells:
-        grid[y, x] = True
+    points = cells.points if isinstance(cells, Pattern) else _points_from_iterable(cells)
+    if points.size == 0:
+        return grid
+
+    invalid_mask = (
+        (points[:, 0] < 0)
+        | (points[:, 0] >= config.width)
+        | (points[:, 1] < 0)
+        | (points[:, 1] >= config.height)
+    )
+    if bool(np.any(invalid_mask)):
+        invalid_point = points[np.flatnonzero(invalid_mask)[0]]
+        msg = f"point {(int(invalid_point[0]), int(invalid_point[1]))!r} is outside the board"
+        raise ValueError(msg)
+    grid[points[:, 1], points[:, 0]] = True
     return grid
 
 
-def _array_to_cells(grid: np.ndarray) -> LiveCells:
-    """Convert a (height, width) bool array back to a frozenset of (x, y) points."""
-
-    ys, xs = np.nonzero(grid)
-    return frozenset(zip(xs.tolist(), ys.tolist(), strict=True))
-
-
-def _step_array(grid: np.ndarray, *, wrap: bool) -> np.ndarray:
+def _step_array(grid: BoolGrid, *, wrap: bool) -> BoolGrid:
     """Apply one Game of Life generation to a 2D bool array."""
 
     return _step_array_n(grid, 1, wrap=wrap)
 
 
-def _step_array_n(grid: np.ndarray, generations: int, *, wrap: bool) -> np.ndarray:
-    """Apply ``generations`` Game of Life steps using a single set of pre-allocated buffers."""
+def _step_array_n(grid: BoolGrid, generations: int, *, wrap: bool) -> BoolGrid:
+    """Apply ``generations`` Game of Life steps using pre-allocated buffers."""
 
     if generations <= 0:
         return grid
@@ -188,3 +308,33 @@ def _is_in_bounds(config: SimulationConfig, point: Point) -> bool:
 
     x, y = point
     return 0 <= x < config.width and 0 <= y < config.height
+
+
+def _empty_points() -> PointArray:
+    points = np.empty((0, 2), dtype=np.int32)
+    points.setflags(write=False)
+    return points
+
+
+def _normalize_points(points: PointArray) -> PointArray:
+    array = np.asarray(points, dtype=np.int32)
+    if array.size == 0:
+        return _empty_points()
+    if array.ndim != 2 or array.shape[1] != 2:
+        msg = "points must have shape (n, 2)"
+        raise ValueError(msg)
+    normalized = np.unique(array, axis=0)
+    normalized.setflags(write=False)
+    return normalized
+
+
+def _points_from_iterable(points: Iterable[Point]) -> PointArray:
+    materialized = tuple(points)
+    if not materialized:
+        return _empty_points()
+    return np.asarray(materialized, dtype=np.int32)
+
+
+def _structured_points_view(points: PointArray) -> npt.NDArray[np.void]:
+    dtype = np.dtype([("x", np.int32), ("y", np.int32)])
+    return np.ascontiguousarray(points).view(dtype).reshape(-1)

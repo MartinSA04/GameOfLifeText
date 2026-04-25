@@ -420,10 +420,7 @@ class BoardCanvas(QWidget):
             focus_pattern = self._focus_pattern
             if focus_pattern is None:
                 return (0, 0, self._board.config.width - 1, self._board.config.height - 1)
-            min_x = min(x for x, _ in focus_pattern)
-            min_y = min(y for _, y in focus_pattern)
-            max_x = max(x for x, _ in focus_pattern)
-            max_y = max(y for _, y in focus_pattern)
+            min_x, min_y, max_x, max_y = focus_pattern.bounds()
             return (
                 max(0, min_x - self._FOCUS_MARGIN_CELLS),
                 max(0, min_y - self._FOCUS_MARGIN_CELLS),
@@ -499,15 +496,11 @@ class GameOfLifeWindow(QMainWindow):
         if self.current_board is None:
             return
         self._stop_animation()
-        live_cells = set(self.current_board.live_cells)
-        point = (x, y)
-        if alive:
-            live_cells.add(point)
-        else:
-            live_cells.discard(point)
+        grid = self.current_board.grid.copy()
+        grid[y, x] = alive
         self.current_board = Board(
             config=self.current_board.config,
-            live_cells=frozenset(live_cells),
+            grid=grid,
             generation=self.current_board.generation,
         )
         self.board_canvas.set_board(

@@ -1,6 +1,12 @@
 """Tests for the Game of Life core."""
 
-from game_of_life_text.simulator import Board, SimulationConfig, centered_cells, random_cells
+from game_of_life_text.simulator import (
+    Board,
+    Pattern,
+    SimulationConfig,
+    centered_cells,
+    random_cells,
+)
 
 
 def test_block_is_stable() -> None:
@@ -24,7 +30,7 @@ def test_blinker_oscillates() -> None:
     next_board = board.step()
     final_board = next_board.step()
 
-    assert next_board.live_cells == frozenset({(2, 1), (2, 2), (2, 3)})
+    assert next_board.live_cells == Pattern.from_points(((2, 1), (2, 2), (2, 3)))
     assert final_board.live_cells == board.live_cells
 
 
@@ -44,9 +50,9 @@ def test_centered_cells_places_patterns_in_the_middle() -> None:
 
     config = SimulationConfig(width=7, height=7, wrap=False)
 
-    centered = centered_cells(config, frozenset({(0, 0), (1, 0), (2, 0)}))
+    centered = centered_cells(config, Pattern.from_points(((0, 0), (1, 0), (2, 0))))
 
-    assert centered == frozenset({(2, 3), (3, 3), (4, 3)})
+    assert centered == Pattern.from_points(((2, 3), (3, 3), (4, 3)))
 
 
 def test_random_cells_are_seeded() -> None:

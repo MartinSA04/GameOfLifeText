@@ -404,12 +404,14 @@ def render_text_block_pattern(text: str) -> Pattern:
     """Render text into a stable still-life pattern made from 2x2 blocks."""
 
     normalized_text = _normalize_text(text)
-    live_cells: set[Point] = set()
-    for origin in _text_pixel_origins(normalized_text):
-        live_cells.update(
-            (origin[0] + tile_x, origin[1] + tile_y) for tile_x, tile_y in BLOCK_PATTERN
-        )
-    return frozenset(live_cells)
+    origins = _text_pixel_origins(normalized_text)
+    if not origins:
+        return Pattern.empty()
+
+    origin_array = np.asarray(origins, dtype=np.int32)
+    block_array = BLOCK_PATTERN.points
+    tiled = origin_array[:, None, :] + block_array[None, :, :]
+    return Pattern(tiled.reshape(-1, 2))
 
 
 @cache
@@ -478,7 +480,7 @@ def _pack_block_plans(
     result and can be ignored, keeping the verification small.
     """
 
-    placed: list[tuple[ConstructionPlan, frozenset[Point]]] = []
+    placed: list[tuple[ConstructionPlan, Pattern]] = []
     for origin in ordered_origins:
         orientation = _block_orientation(origin, center=center)
         for extra_periods in range(_MAX_PACK_SLOT + 1):
@@ -495,10 +497,9 @@ def _pack_block_plans(
                 break
 
             tentative = combine_plans([*touching, candidate])
-            expected = (
-                frozenset[Point]().union(*(p.target_cells for p in touching))
-                | candidate.target_cells
-            )
+            expected_patterns = [plan.target_cells for plan in touching]
+            expected_patterns.append(candidate.target_cells)
+            expected = Pattern.merge(*expected_patterns)
             if evolve_construction(tentative) == expected:
                 placed.append((candidate, candidate_footprint))
                 break
@@ -509,49 +510,44 @@ def _pack_block_plans(
 
 
 @cache
-def _base_construction_footprint(orientation: str, extra_periods: int) -> frozenset[Point]:
+def _base_construction_footprint(orientation: str, extra_periods: int) -> Pattern:
     """Return the Moore-expanded swept cells for one block construction at origin (0, 0)."""
 
     plan = plan_block((0, 0), orientation=orientation, extra_periods=extra_periods)
     if plan.initial_cells:
-        min_x = min(x for x, _ in plan.initial_cells)
-        min_y = min(y for _, y in plan.initial_cells)
-        max_x = max(x for x, _ in plan.initial_cells)
-        max_y = max(y for _, y in plan.initial_cells)
+        min_x, min_y, max_x, max_y = plan.initial_cells.bounds()
         padding = plan.generations + 4
         height = max_y - min_y + 1 + padding * 2
         width = max_x - min_x + 1 + padding * 2
         grid = np.zeros((height, width), dtype=np.bool_)
-        for x, y in plan.initial_cells:
-            grid[y - min_y + padding, x - min_x + padding] = True
+        points = plan.initial_cells.points
+        grid[points[:, 1] - min_y + padding, points[:, 0] - min_x + padding] = True
         swept_arr = grid.copy()
         for _ in range(plan.generations):
             grid = _step_array(grid, wrap=False)
             swept_arr |= grid
-        ys, xs = np.nonzero(swept_arr)
-        swept: set[Point] = {
-            (int(x) + min_x - padding, int(y) + min_y - padding)
-            for x, y in zip(xs, ys, strict=True)
-        }
+        swept = Pattern.from_grid(swept_arr).translated(min_x - padding, min_y - padding)
     else:
-        swept = set()
-    swept |= set(plan.target_cells)
-    expanded: set[Point] = set()
-    for x, y in swept:
-        for dx in (-1, 0, 1):
-            for dy in (-1, 0, 1):
-                expanded.add((x + dx, y + dy))
-    return frozenset(expanded)
+        swept = Pattern.empty()
+    swept = Pattern.merge(swept, plan.target_cells)
+    if not swept:
+        return Pattern.empty()
+
+    offsets = np.asarray(
+        [(dx, dy) for dx in (-1, 0, 1) for dy in (-1, 0, 1)],
+        dtype=np.int32,
+    )
+    expanded = swept.points[:, None, :] + offsets[None, :, :]
+    return Pattern(expanded.reshape(-1, 2))
 
 
 def _block_construction_footprint(
     orientation: str, extra_periods: int, origin: Point
-) -> frozenset[Point]:
+) -> Pattern:
     """Translate the cached base footprint to ``origin``."""
 
     base = _base_construction_footprint(orientation, extra_periods)
-    offset_x, offset_y = origin
-    return frozenset((x + offset_x, y + offset_y) for x, y in base)
+    return base.translated(origin[0], origin[1])
 
 
 def _normalize_text(text: str) -> str:
@@ -592,12 +588,30 @@ def _text_pixel_origins(text: str) -> tuple[Point, ...]:
 def _extract_block_origins(pattern: Pattern) -> tuple[Point, ...]:
     """Return the top-left cell for each 2x2 block in a pattern."""
 
+    if not pattern:
+        return ()
+
+    min_x, min_y, max_x, max_y = pattern.bounds()
+    width = max_x - min_x + 1
+    height = max_y - min_y + 1
+    mask = np.zeros((height, width), dtype=np.bool_)
+    rel = pattern.points - np.array((min_x, min_y), dtype=np.int32)
+    mask[rel[:, 1], rel[:, 0]] = True
+
     origins: list[Point] = []
-    for x, y in sorted(pattern):
-        block_cells = {(x, y), (x + 1, y), (x, y + 1), (x + 1, y + 1)}
-        if not block_cells.issubset(pattern):
+    for x, y in pattern:
+        rel_x = x - min_x
+        rel_y = y - min_y
+        if rel_x + 1 >= width or rel_y + 1 >= height:
             continue
-        if (x - 1, y) in pattern or (x, y - 1) in pattern:
+        if not (
+            mask[rel_y, rel_x]
+            and mask[rel_y, rel_x + 1]
+            and mask[rel_y + 1, rel_x]
+            and mask[rel_y + 1, rel_x + 1]
+        ):
+            continue
+        if (rel_x > 0 and mask[rel_y, rel_x - 1]) or (rel_y > 0 and mask[rel_y - 1, rel_x]):
             continue
         origins.append((x, y))
     return tuple(origins)

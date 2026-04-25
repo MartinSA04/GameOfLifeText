@@ -3,48 +3,49 @@
 from __future__ import annotations
 
 from collections.abc import Iterable
+from dataclasses import dataclass
 from functools import cache
 from typing import Final
 
-from pydantic import BaseModel, ConfigDict, Field
+import numpy as np
 
-from .simulator import Board, LiveCells, Pattern, Point, SimulationConfig
+from .simulator import Board, Pattern, Point, SimulationConfig
 
 type Direction = Point
 type _Component = tuple[Pattern, Direction]
 
-BLOCK_PATTERN: Final[Pattern] = frozenset({(0, 0), (1, 0), (0, 1), (1, 1)})
+BLOCK_PATTERN: Final[Pattern] = Pattern.from_points(((0, 0), (1, 0), (0, 1), (1, 1)))
 BLOCK_SYNTHESIS_BASE_GENERATIONS: Final[int] = 4
-_BLOCK_SYNTHESIS_BASE_TARGET: Final[Pattern] = frozenset(
-    {
+_BLOCK_SYNTHESIS_BASE_TARGET: Final[Pattern] = Pattern.from_points(
+    (
         (-4, -2),
         (-4, -1),
         (-3, -2),
         (-3, -1),
-    }
+    )
 )
 _BLOCK_SYNTHESIS_BASE_COMPONENTS: Final[tuple[_Component, ...]] = (
     (
-        frozenset(
-            {
+        Pattern.from_points(
+            (
                 (0, 0),
                 (0, 1),
                 (0, 2),
                 (1, 0),
                 (2, 1),
-            }
+            )
         ),
         (-1, -1),
     ),
     (
-        frozenset(
-            {
+        Pattern.from_points(
+            (
                 (-3, -3),
                 (-3, -2),
                 (-3, -1),
                 (-2, -1),
                 (-1, -2),
-            }
+            )
         ),
         (-1, 1),
     ),
@@ -57,20 +58,23 @@ _ORIENTATION_TRANSFORMS: Final[dict[str, tuple[int, bool]]] = {
 }
 
 
-class ConstructionPlan(BaseModel):
+@dataclass(frozen=True, slots=True, eq=False)
+class ConstructionPlan:
     """A seed pattern that settles into a deterministic target."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
 
     initial_cells: Pattern
     target_cells: Pattern
-    generations: int = Field(ge=0)
+    generations: int
+
+    def __post_init__(self) -> None:
+        if self.generations < 0:
+            msg = "generations must be non-negative"
+            raise ValueError(msg)
 
 
-class _BlockSynthesisVariant(BaseModel):
+@dataclass(frozen=True, slots=True, eq=False)
+class _BlockSynthesisVariant:
     """One oriented two-glider block construction."""
-
-    model_config = ConfigDict(extra="forbid", frozen=True)
 
     orientation: str
     target_top_left: Point
@@ -80,8 +84,7 @@ class _BlockSynthesisVariant(BaseModel):
 def block_at(top_left: Point) -> Pattern:
     """Return the exact cells for a 2x2 block at a requested top-left point."""
 
-    origin_x, origin_y = top_left
-    return frozenset((origin_x + x, origin_y + y) for x, y in BLOCK_PATTERN)
+    return BLOCK_PATTERN.translated(top_left[0], top_left[1])
 
 
 def plan_block(
@@ -124,61 +127,60 @@ def gliders_for_block(
     shift_x = top_left[0] - variant.target_top_left[0]
     shift_y = top_left[1] - variant.target_top_left[1]
 
-    initial_cells: set[Point] = set()
+    translated_components: list[Pattern] = []
     for cells, direction in variant.components:
         direction_x, direction_y = direction
         backstep_x = shift_x - direction_x * extra_periods
         backstep_y = shift_y - direction_y * extra_periods
-        initial_cells.update((backstep_x + x, backstep_y + y) for x, y in cells)
-    return frozenset(initial_cells)
+        translated_components.append(cells.translated(backstep_x, backstep_y))
+    return Pattern.merge(*translated_components)
 
 
 def combine_plans(plans: Iterable[ConstructionPlan]) -> ConstructionPlan:
     """Merge several independently planned syntheses into one board seed."""
 
-    initial_cells: set[Point] = set()
-    target_cells: set[Point] = set()
+    initial_patterns: list[Pattern] = []
+    target_patterns: list[Pattern] = []
     generations = 0
 
     for plan in plans:
-        initial_cells.update(plan.initial_cells)
-        target_cells.update(plan.target_cells)
+        if plan.initial_cells:
+            initial_patterns.append(plan.initial_cells)
+        if plan.target_cells:
+            target_patterns.append(plan.target_cells)
         generations = max(generations, plan.generations)
 
     return ConstructionPlan(
-        initial_cells=frozenset(initial_cells),
-        target_cells=frozenset(target_cells),
+        initial_cells=Pattern.merge(*initial_patterns),
+        target_cells=Pattern.merge(*target_patterns),
         generations=generations,
     )
 
 
-def center_construction(config: SimulationConfig, plan: ConstructionPlan) -> LiveCells:
+def center_construction(config: SimulationConfig, plan: ConstructionPlan) -> Pattern:
     """Translate a construction so its finished target is centered on the board."""
 
     if not plan.target_cells:
-        return frozenset()
+        return Pattern.empty()
 
-    min_x = min(x for x, _ in plan.target_cells)
-    min_y = min(y for _, y in plan.target_cells)
-    max_x = max(x for x, _ in plan.target_cells)
-    max_y = max(y for _, y in plan.target_cells)
+    min_x, min_y, max_x, max_y = plan.target_cells.bounds()
     width = max_x - min_x + 1
     height = max_y - min_y + 1
     offset_x = (config.width - width) // 2 - min_x
     offset_y = (config.height - height) // 2 - min_y
 
-    translated = frozenset((x + offset_x, y + offset_y) for x, y in plan.initial_cells)
-    invalid_point = next(
-        (
-            point
-            for point in translated
-            if not 0 <= point[0] < config.width or not 0 <= point[1] < config.height
-        ),
-        None,
-    )
-    if invalid_point is not None:
-        msg = "board is too small for this glider construction; increase width or height"
-        raise ValueError(msg)
+    translated = plan.initial_cells.translated(offset_x, offset_y)
+    if translated:
+        points = translated.points
+        invalid_mask = (
+            (points[:, 0] < 0)
+            | (points[:, 0] >= config.width)
+            | (points[:, 1] < 0)
+            | (points[:, 1] >= config.height)
+        )
+        if bool(np.any(invalid_mask)):
+            msg = "board is too small for this glider construction; increase width or height"
+            raise ValueError(msg)
     return translated
 
 
@@ -190,25 +192,17 @@ def minimum_centered_board_size(
     """Return the minimum board size needed to center a construction safely."""
 
     if not plan.target_cells:
-        return (max(1, padding * 2 + 1), max(1, padding * 2 + 1))
+        side = max(1, padding * 2 + 1)
+        return (side, side)
     if not plan.initial_cells:
-        target_min_x = min(x for x, _ in plan.target_cells)
-        target_min_y = min(y for _, y in plan.target_cells)
-        target_max_x = max(x for x, _ in plan.target_cells)
-        target_max_y = max(y for _, y in plan.target_cells)
+        target_min_x, target_min_y, target_max_x, target_max_y = plan.target_cells.bounds()
         return (
             target_max_x - target_min_x + 1 + padding * 2,
             target_max_y - target_min_y + 1 + padding * 2,
         )
 
-    min_initial_x = min(x for x, _ in plan.initial_cells)
-    min_initial_y = min(y for _, y in plan.initial_cells)
-    max_initial_x = max(x for x, _ in plan.initial_cells)
-    max_initial_y = max(y for _, y in plan.initial_cells)
-    min_target_x = min(x for x, _ in plan.target_cells)
-    min_target_y = min(y for _, y in plan.target_cells)
-    max_target_x = max(x for x, _ in plan.target_cells)
-    max_target_y = max(y for _, y in plan.target_cells)
+    min_initial_x, min_initial_y, max_initial_x, max_initial_y = plan.initial_cells.bounds()
+    min_target_x, min_target_y, max_target_x, max_target_y = plan.target_cells.bounds()
     target_width = max_target_x - min_target_x + 1
     target_height = max_target_y - min_target_y + 1
     left_need = max(0, min_target_x - min_initial_x)
@@ -225,21 +219,18 @@ def evolve_construction(plan: ConstructionPlan) -> Pattern:
     """Simulate a construction plan and return its final settled cells."""
 
     if not plan.initial_cells:
-        return frozenset()
+        return Pattern.empty()
 
-    min_x = min(x for x, _ in plan.initial_cells)
-    min_y = min(y for _, y in plan.initial_cells)
-    max_x = max(x for x, _ in plan.initial_cells)
-    max_y = max(y for _, y in plan.initial_cells)
+    min_x, min_y, max_x, max_y = plan.initial_cells.bounds()
     padding = plan.generations + 12
     config = SimulationConfig(
         width=max_x - min_x + 1 + padding * 2,
         height=max_y - min_y + 1 + padding * 2,
         wrap=False,
     )
-    shifted = {(x - min_x + padding, y - min_y + padding) for x, y in plan.initial_cells}
+    shifted = plan.initial_cells.translated(-min_x + padding, -min_y + padding)
     board = Board.from_points(config, shifted).step_n(plan.generations)
-    return frozenset((x + min_x - padding, y + min_y - padding) for x, y in board.live_cells)
+    return board.live_cells.translated(min_x - padding, min_y - padding)
 
 
 @cache
@@ -259,9 +250,10 @@ def block_synthesis_variant(orientation: str) -> _BlockSynthesisVariant:
         )
         for cells, direction in _BLOCK_SYNTHESIS_BASE_COMPONENTS
     )
+    min_x, min_y, _, _ = target.bounds()
     return _BlockSynthesisVariant(
         orientation=orientation,
-        target_top_left=(min(x for x, _ in target), min(y for _, y in target)),
+        target_top_left=(min_x, min_y),
         components=components,
     )
 
@@ -269,12 +261,14 @@ def block_synthesis_variant(orientation: str) -> _BlockSynthesisVariant:
 def _transform_pattern(pattern: Pattern, rotation_count: int, reflect: bool) -> Pattern:
     """Apply the synthesis symmetry transform to every cell."""
 
-    transformed = set(pattern)
+    if not pattern:
+        return Pattern.empty()
+    transformed = np.array(pattern.points, copy=True)
     if reflect:
-        transformed = {(-x, y) for x, y in transformed}
+        transformed[:, 0] *= -1
     for _ in range(rotation_count % 4):
-        transformed = {(y, -x) for x, y in transformed}
-    return frozenset(transformed)
+        transformed = np.column_stack((transformed[:, 1], -transformed[:, 0]))
+    return Pattern(transformed.astype(np.int32, copy=False))
 
 
 def _transform_direction(direction: Direction, rotation_count: int, reflect: bool) -> Direction:
