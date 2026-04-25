@@ -2,8 +2,9 @@
 
 import pytest
 
-from game_of_life_text.construction import evolve_construction
-from game_of_life_text.simulator import Board, SimulationConfig
+from game_of_life_text import text as text_module
+from game_of_life_text.construction import ConstructionPlan, evolve_construction
+from game_of_life_text.simulator import Board, Pattern, Point, SimulationConfig
 from game_of_life_text.text import (
     FONT_5X7,
     render_text_block_construction,
@@ -45,6 +46,48 @@ def test_multi_character_block_construction_settles_correctly() -> None:
 
     plan = render_text_block_construction("OF")
     assert evolve_construction(plan) == plan.target_cells
+
+
+def test_pack_block_plans_tries_fallback_outward_direction(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The packing search should try the secondary outward direction if needed."""
+
+    first_origin = (0, 0)
+    second_origin = (10, -1)
+    attempts: list[tuple[Point, str, int]] = []
+
+    def fake_plan_block(
+        origin: Point,
+        *,
+        orientation: str = "east",
+        extra_periods: int = 0,
+    ) -> ConstructionPlan:
+        attempts.append((origin, orientation, extra_periods))
+        offset = 0 if origin == first_origin else 100
+        pattern = Pattern.from_points(((offset, 0),))
+        return ConstructionPlan(initial_cells=pattern, target_cells=pattern, generations=0)
+
+    def fake_footprint(orientation: str, extra_periods: int, origin: Point) -> Pattern:
+        _ = extra_periods
+        if origin == first_origin:
+            return Pattern.from_points(((0, 0),))
+        if orientation == "east":
+            return Pattern.from_points(((0, 0),))
+        return Pattern.from_points(((200, 0),))
+
+    monkeypatch.setattr(text_module, "plan_block", fake_plan_block)
+    monkeypatch.setattr(text_module, "_block_construction_footprint", fake_footprint)
+    monkeypatch.setattr(text_module, "evolve_construction", lambda plan: Pattern.empty())
+
+    plans = text_module._pack_block_plans((first_origin, second_origin), center=(0.0, 0.0))
+
+    assert len(plans) == 2
+    second_attempts = [attempt for attempt in attempts if attempt[0] == second_origin]
+    assert second_attempts == [
+        (second_origin, "east", 0),
+        (second_origin, "north", 0),
+    ]
 
 
 def test_render_text_block_pattern_rejects_unsupported_characters() -> None:

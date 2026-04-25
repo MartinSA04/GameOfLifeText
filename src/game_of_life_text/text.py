@@ -418,10 +418,11 @@ def render_text_block_pattern(text: str) -> Pattern:
 def render_text_block_construction(text: str) -> ConstructionPlan:
     """Return a deterministic glider seed plan that settles into block text.
 
-    Builds blocks outward from the text center using the same outward launch
-    direction as the original sequential planner. Each block claims the smallest
-    launch period whose glider trajectory does not collide with any already-placed
-    block, so distant blocks share a slot and settle in parallel.
+    Builds blocks outward from the text center. Each block tries the two outward
+    launch directions implied by its position relative to that center, and
+    claims the smallest launch period whose glider trajectory does not collide
+    with any already-placed block, so distant blocks share a slot and settle
+    in parallel.
     """
 
     normalized_text = _normalize_text(text)
@@ -470,40 +471,51 @@ def _pack_block_plans(
 ) -> list[ConstructionPlan]:
     """Place each block at the smallest launch period that keeps all glider paths apart.
 
-    Blocks are placed in distance-from-center order with the same outward launch
-    direction the original sequential planner picked. For each block we sweep
-    extra_periods upward and accept the first value whose Moore-expanded swept
-    cells are spatially disjoint from every already-placed block — those blocks
-    are guaranteed independent and run in parallel. When a candidate's
-    footprint touches an existing block we verify by simulating the candidate
-    together with the touching subset; non-touching blocks cannot disturb the
-    result and can be ignored, keeping the verification small.
+    Blocks are placed in distance-from-center order. For each block we sweep
+    extra_periods upward and try both outward launch directions implied by the
+    block's position relative to the shared center, accepting the first
+    candidate whose Moore-expanded swept cells are spatially disjoint from every
+    already-placed block. Those blocks are guaranteed independent and run in
+    parallel. When a candidate's footprint touches an existing block we verify
+    by simulating the candidate together with the touching subset; non-touching
+    blocks cannot disturb the result and can be ignored, keeping the
+    verification small.
     """
 
     placed: list[tuple[ConstructionPlan, Pattern]] = []
     for origin in ordered_origins:
-        orientation = _block_orientation(origin, center=center)
+        orientations = _block_orientations(origin, center=center)
+        accepted = False
         for extra_periods in range(_MAX_PACK_SLOT + 1):
-            candidate = plan_block(origin, orientation=orientation, extra_periods=extra_periods)
-            candidate_footprint = _block_construction_footprint(orientation, extra_periods, origin)
+            for orientation in orientations:
+                candidate = plan_block(origin, orientation=orientation, extra_periods=extra_periods)
+                candidate_footprint = _block_construction_footprint(
+                    orientation,
+                    extra_periods,
+                    origin,
+                )
 
-            touching = [
-                placed_plan
-                for placed_plan, placed_fp in placed
-                if not placed_fp.isdisjoint(candidate_footprint)
-            ]
-            if not touching:
-                placed.append((candidate, candidate_footprint))
-                break
+                touching = [
+                    placed_plan
+                    for placed_plan, placed_fp in placed
+                    if not placed_fp.isdisjoint(candidate_footprint)
+                ]
+                if not touching:
+                    placed.append((candidate, candidate_footprint))
+                    accepted = True
+                    break
 
-            tentative = combine_plans([*touching, candidate])
-            expected_patterns = [plan.target_cells for plan in touching]
-            expected_patterns.append(candidate.target_cells)
-            expected = Pattern.merge(*expected_patterns)
-            if evolve_construction(tentative) == expected:
-                placed.append((candidate, candidate_footprint))
+                tentative = combine_plans([*touching, candidate])
+                expected_patterns = [plan.target_cells for plan in touching]
+                expected_patterns.append(candidate.target_cells)
+                expected = Pattern.merge(*expected_patterns)
+                if evolve_construction(tentative) == expected:
+                    placed.append((candidate, candidate_footprint))
+                    accepted = True
+                    break
+            if accepted:
                 break
-        else:
+        if not accepted:
             msg = f"could not pack block at {origin!r} within {_MAX_PACK_SLOT} slots"
             raise ValueError(msg)
     return [plan for plan, _ in placed]
@@ -617,15 +629,21 @@ def _extract_block_origins(pattern: Pattern) -> tuple[Point, ...]:
     return tuple(origins)
 
 
-def _block_orientation(origin: Point, *, center: tuple[float, float]) -> str:
-    """Return the deterministic outward launch direction for one block."""
+def _block_orientations(origin: Point, *, center: tuple[float, float]) -> tuple[str, str]:
+    """Return the two outward launch directions to try for one block.
+
+    The dominant axis is tried first to preserve the previous deterministic
+    preference, and the secondary axis is used as a fallback during search.
+    """
 
     center_x, center_y = center
     delta_x = origin[0] + 0.5 - center_x
     delta_y = origin[1] + 0.5 - center_y
+    horizontal = "east" if delta_x >= 0 else "west"
+    vertical = "south" if delta_y >= 0 else "north"
     if abs(delta_x) >= abs(delta_y):
-        return "east" if delta_x >= 0 else "west"
-    return "south" if delta_y >= 0 else "north"
+        return (horizontal, vertical)
+    return (vertical, horizontal)
 
 
 def _block_distance_squared(origin: Point, *, center: tuple[float, float]) -> float:
