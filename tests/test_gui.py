@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import os
+import time
+from collections.abc import Callable
 from pathlib import Path
+from threading import Event
 
 import pytest
 
@@ -30,6 +33,24 @@ def qapp() -> QApplication:
     return QApplication([])
 
 
+def wait_for_gui(
+    qapp: QApplication,
+    predicate: Callable[[], bool],
+    *,
+    timeout_ms: int = 5000,
+) -> None:
+    """Process Qt events until a GUI predicate becomes true."""
+
+    deadline = time.monotonic() + timeout_ms / 1000
+    while time.monotonic() < deadline:
+        qapp.processEvents()
+        if predicate():
+            return
+        QTest.qWait(10)
+    qapp.processEvents()
+    assert predicate()
+
+
 def test_gui_can_build_block_text_construction_board(qapp: QApplication) -> None:
     """The GUI should auto-size and build glider-based block text boards."""
 
@@ -40,6 +61,7 @@ def test_gui_can_build_block_text_construction_board(qapp: QApplication) -> None
         window.text_input.setPlainText("I")
 
         window.apply_simulation_settings()
+        wait_for_gui(qapp, lambda: window.current_board is not None)
 
         assert window.current_board is not None
         insight = inspect_text_construction("I")
@@ -68,6 +90,8 @@ def test_gui_defaults_to_text_generation_workflow(qapp: QApplication) -> None:
         assert window.text_input.toPlainText() == ""
         assert window.text_summary_label.text() == ""
         assert window.preview_summary_label.text() == ""
+        assert window.generation_progress_bar.isHidden()
+        assert window.progress_bar.isHidden()
         assert not window.text_frame.isHidden()
         assert window.board_group.isHidden()
         assert not window.rebuild_button.isEnabled()
@@ -86,14 +110,19 @@ def test_gui_only_runs_text_generation_when_generate_is_used(
     calls: list[str] = []
     original_inspect = gui_module.inspect_text_construction
 
-    def tracked_inspect(text: str) -> object:
+    def tracked_inspect(
+        text: str,
+        *,
+        progress_callback: Callable[[int, int], None] | None = None,
+    ) -> object:
+        _ = progress_callback
         calls.append(text)
         return original_inspect(text)
 
     monkeypatch.setattr(gui_module, "inspect_text_construction", tracked_inspect)
     window = GameOfLifeWindow()
     try:
-        window.text_input.setPlainText("HI")
+        window.text_input.setPlainText("I")
         window.width_spin.setValue(260)
         window.height_spin.setValue(180)
         qapp.processEvents()
@@ -109,8 +138,9 @@ def test_gui_only_runs_text_generation_when_generate_is_used(
         assert window.current_board is None
 
         QTest.mouseClick(window.rebuild_button, Qt.MouseButton.LeftButton)
+        wait_for_gui(qapp, lambda: window.current_text_insight is not None)
 
-        assert calls == ["HI"]
+        assert calls == ["I"]
         assert window.text_summary_label.text() == ""
         assert window.current_text_insight is not None
     finally:
@@ -133,6 +163,7 @@ def test_gui_can_build_random_board(qapp: QApplication) -> None:
 
         assert window.current_board is not None
         assert window.current_board.alive_count > 0
+        assert window.progress_bar.isHidden()
     finally:
         window.close()
 
@@ -195,15 +226,88 @@ def test_gui_text_boards_use_recommended_dimensions(qapp: QApplication) -> None:
     window = GameOfLifeWindow()
     try:
         window.source_combo.setCurrentText("Stable text")
-        window.text_input.setPlainText("HI")
+        window.text_input.setPlainText("I")
         window.apply_simulation_settings()
-        insight = inspect_text_construction("HI")
+        wait_for_gui(qapp, lambda: window.current_board is not None)
+        insight = inspect_text_construction("I")
 
         assert window.current_board is not None
         assert not window.fit_text_button.isVisible()
         assert window.width_spin.value() == insight.recommended_width
         assert window.height_spin.value() == insight.recommended_height
     finally:
+        window.close()
+
+
+def test_gui_progress_bar_tracks_stable_text_settle_generation(qapp: QApplication) -> None:
+    """Stable text progress should track generations until the construction settles."""
+
+    _ = qapp
+    window = GameOfLifeWindow()
+    try:
+        window.source_combo.setCurrentText("Stable text")
+        window.text_input.setPlainText("I")
+        window.apply_simulation_settings()
+        wait_for_gui(qapp, lambda: window.current_board is not None)
+        plan = render_text_block_construction("I")
+
+        assert not window.progress_bar.isHidden()
+        assert window.progress_bar.minimum() == 0
+        assert window.progress_bar.maximum() == plan.generations
+        assert window.progress_bar.value() == 0
+
+        window.advance_generation()
+
+        assert window.progress_bar.value() == 1
+        assert window.progress_bar.format() == f"1 / {plan.generations}"
+    finally:
+        window.close()
+
+
+def test_gui_generation_progress_bar_shows_while_text_board_is_built(
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Text generation should show determinate progress while building."""
+
+    _ = qapp
+    original_inspect = gui_module.inspect_text_construction
+    started = Event()
+    release = Event()
+    window = GameOfLifeWindow()
+
+    def tracked_inspect(
+        text: str,
+        *,
+        progress_callback: Callable[[int, int], None] | None = None,
+    ) -> object:
+        assert progress_callback is not None
+        progress_callback(1, 4)
+        started.set()
+        assert release.wait(timeout=2)
+        return original_inspect(text, progress_callback=progress_callback)
+
+    monkeypatch.setattr(gui_module, "inspect_text_construction", tracked_inspect)
+    try:
+        window.source_combo.setCurrentText("Stable text")
+        window.text_input.setPlainText("I")
+
+        window.apply_simulation_settings()
+
+        assert started.wait(timeout=2)
+        wait_for_gui(qapp, lambda: window.generation_progress_bar.value() == 1)
+        assert not window.generation_progress_bar.isHidden()
+        assert window.generation_progress_bar.minimum() == 0
+        assert window.generation_progress_bar.maximum() == 4
+        assert window.generation_progress_bar.format() == "Generating 1 / 4"
+        assert not window.rebuild_button.isEnabled()
+
+        release.set()
+        wait_for_gui(qapp, lambda: window.current_board is not None)
+        assert window.generation_progress_bar.isHidden()
+        assert window.rebuild_button.isEnabled()
+    finally:
+        release.set()
         window.close()
 
 
@@ -296,17 +400,17 @@ def test_gui_text_focus_view_fills_preview_by_default(qapp: QApplication) -> Non
     try:
         window.show()
         window.source_combo.setCurrentText("Stable text")
-        window.text_input.setPlainText("HI")
+        window.text_input.setPlainText("I")
         window.width_spin.setValue(260)
         window.height_spin.setValue(180)
         window.apply_simulation_settings()
-        qapp.processEvents()
+        wait_for_gui(qapp, lambda: window.current_board is not None)
 
         assert window.current_board is not None
         assert window.board_canvas.is_showing_focus_region()
         target = centered_cells(
             window.current_board.config,
-            render_text_block_construction("HI").target_cells,
+            render_text_block_construction("I").target_cells,
         )
         min_x = min(x for x, _ in target)
         min_y = min(y for _, y in target)
@@ -348,7 +452,7 @@ def test_gui_can_export_generated_plan_as_xy_pairs(
         window.width_spin.setValue(220)
         window.height_spin.setValue(140)
         window.apply_simulation_settings()
-        qapp.processEvents()
+        wait_for_gui(qapp, lambda: window.current_board is not None)
 
         monkeypatch.setattr(
             gui_module.QFileDialog,

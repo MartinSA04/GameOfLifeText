@@ -8,6 +8,7 @@ from game_of_life_text.simulator import Board, Pattern, Point, SimulationConfig
 from game_of_life_text.text import (
     FONT_5X7,
     render_text_block_construction,
+    render_text_block_construction_with_progress,
     render_text_block_pattern,
 )
 
@@ -48,6 +49,23 @@ def test_multi_character_block_construction_settles_correctly() -> None:
     assert evolve_construction(plan) == plan.target_cells
 
 
+def test_text_construction_reports_block_build_progress() -> None:
+    """Progress callbacks should report determinate construction progress."""
+
+    calls: list[tuple[int, int]] = []
+
+    render_text_block_construction_with_progress(
+        "I",
+        lambda current, total: calls.append((current, total)),
+    )
+
+    assert calls[0][0] == 0
+    assert calls[-1][0] == calls[-1][1]
+    assert calls[-1][1] > 1
+    assert [current for current, _ in calls] == sorted(current for current, _ in calls)
+    assert len({total for _, total in calls}) == 1
+
+
 def test_pack_block_plans_tries_fallback_outward_direction(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -68,9 +86,7 @@ def test_pack_block_plans_tries_fallback_outward_direction(
         pattern = Pattern.from_points(((offset, 0),))
         return ConstructionPlan(initial_cells=pattern, target_cells=pattern, generations=0)
 
-    def fake_base_block_data(
-        orientation: str, extra_periods: int
-    ) -> text_module._BaseBlockData:
+    def fake_base_block_data(orientation: str, extra_periods: int) -> text_module._BaseBlockData:
         _ = extra_periods
         if orientation == "east":
             # Both origins translate this footprint to include the second origin,

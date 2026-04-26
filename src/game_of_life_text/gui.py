@@ -3,12 +3,24 @@
 from __future__ import annotations
 
 import sys
+from collections.abc import Callable
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
+from threading import Lock
 
 from pydantic import BaseModel, ConfigDict, Field
 from PySide6.QtCore import QPoint, QRect, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QFont, QMouseEvent, QPainter, QPaintEvent, QPen, QWheelEvent
+from PySide6.QtGui import (
+    QCloseEvent,
+    QColor,
+    QFont,
+    QMouseEvent,
+    QPainter,
+    QPaintEvent,
+    QPen,
+    QWheelEvent,
+)
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -25,6 +37,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPlainTextEdit,
+    QProgressBar,
     QPushButton,
     QSizePolicy,
     QSpinBox,
@@ -35,7 +48,7 @@ from PySide6.QtWidgets import (
 
 from .construction import ConstructionPlan, center_construction, minimum_centered_board_size
 from .simulator import Board, Pattern, SimulationConfig, centered_cells, random_cells
-from .text import render_text_block_construction
+from .text import render_text_block_construction, render_text_block_construction_with_progress
 
 TEXT_SOURCE = "Stable text"
 RANDOM_SOURCE = "Random board"
@@ -138,6 +151,18 @@ QPushButton#primaryAction {
     border-color: #1e3d31;
     font-weight: 700;
 }
+QProgressBar {
+    background: #ebe1d2;
+    border: 1px solid #d2c4b1;
+    border-radius: 8px;
+    color: #233129;
+    min-height: 16px;
+    text-align: center;
+}
+QProgressBar::chunk {
+    background: #1e3d31;
+    border-radius: 7px;
+}
 """
 
 
@@ -169,6 +194,39 @@ class TextConstructionInsight:
     target_height: int
     recommended_width: int
     recommended_height: int
+
+
+@dataclass(frozen=True, slots=True)
+class SimulationBuildResult:
+    """A fully built simulation payload ready to apply on the UI thread."""
+
+    settings: SimulationSettings
+    board: Board
+    export_pattern: Pattern | None
+    text_insight: TextConstructionInsight | None
+    focus_pattern: Pattern | None
+    show_focus: bool
+
+
+class AtomicProgress:
+    """Thread-safe integer progress shared between the build worker and UI thread."""
+
+    def __init__(self) -> None:
+        self._lock = Lock()
+        self._current = 0
+        self._total = 1
+
+    def reset(self) -> None:
+        self.set(0, 1)
+
+    def set(self, current: int, total: int) -> None:
+        with self._lock:
+            self._current = max(0, current)
+            self._total = max(1, total)
+
+    def snapshot(self) -> tuple[int, int]:
+        with self._lock:
+            return (self._current, self._total)
 
 
 class BoardCanvas(QWidget):
@@ -471,6 +529,15 @@ class GameOfLifeWindow(QMainWindow):
         self.current_text_insight: TextConstructionInsight | None = None
         self._current_step_limit: int | None = None
         self._steps_taken = 0
+        self._build_executor = ThreadPoolExecutor(
+            max_workers=1,
+            thread_name_prefix="game-of-life-build",
+        )
+        self._build_future: Future[SimulationBuildResult] | None = None
+        self._build_progress = AtomicProgress()
+        self._build_poll_timer = QTimer(self)
+        self._build_poll_timer.setInterval(40)
+        self._build_poll_timer.timeout.connect(self._poll_generation_build)
         self._timer = QTimer(self)
         self._timer.timeout.connect(self.advance_generation)
         self.setWindowTitle("Game of Life Text Studio")
@@ -482,47 +549,40 @@ class GameOfLifeWindow(QMainWindow):
         self._sync_source_controls()
         self._sync_view_controls()
         self._refresh_preview_summary()
+        self._sync_progress_bar()
 
     def apply_simulation_settings(self) -> None:
         """Build a new board from the current controls."""
 
-        text_insight: TextConstructionInsight | None = None
+        if self._build_future is not None and not self._build_future.done():
+            return
+        show_generation_progress = (
+            self.source_combo.currentText() == TEXT_SOURCE and self._editor_text() != ""
+        )
         try:
             settings = self.build_simulation_settings()
-            if settings.text is not None:
-                text_insight = inspect_text_construction(settings.text)
-            board, export_pattern = build_initial_board(
-                settings,
-                text_plan=text_insight.plan if text_insight is not None else None,
-            )
-            focus_pattern, show_focus = self._simulation_focus_pattern(
-                settings,
-                board,
-                text_insight=text_insight,
-            )
         except ValueError as exc:
             self._show_error(str(exc))
             return
 
-        self._stop_animation()
-        self.current_board = board
-        self.current_settings = settings
-        self.current_export_pattern = export_pattern
-        self.current_export_name = (
-            _suggest_export_name(settings.text) if settings.text is not None else None
-        )
-        self.current_text_insight = text_insight
-        self._current_step_limit = settings.steps
-        self._steps_taken = 0
-        self._sync_board_size_controls(board)
-        self.board_canvas.set_board(
-            self.current_board,
-            message=self._board_message(),
-        )
-        self._set_canvas_focus(focus_pattern, show=show_focus)
-        self._sync_export_button()
-        self._refresh_preview_summary()
-        self._set_status("Generated." if settings.text is not None else "Ready.")
+        if settings.text is not None:
+            if show_generation_progress:
+                self._start_generation_progress()
+            self._build_future = self._build_executor.submit(
+                _build_simulation_result,
+                settings,
+                self._build_progress.set,
+            )
+            self._build_poll_timer.start()
+            self._set_status("Generating.")
+            return
+
+        try:
+            result = _build_simulation_result(settings)
+        except ValueError as exc:
+            self._show_error(str(exc))
+            return
+        self._apply_build_result(result)
 
     def advance_generation(self) -> None:
         """Advance the current board by one generation."""
@@ -541,6 +601,7 @@ class GameOfLifeWindow(QMainWindow):
             message=self._board_message(),
         )
         self._refresh_preview_summary()
+        self._sync_progress_bar()
         self._set_status(f"Generation {self.current_board.generation}.")
 
     def paint_simulation_cell(self, x: int, y: int, alive: bool) -> None:
@@ -561,6 +622,7 @@ class GameOfLifeWindow(QMainWindow):
             message=self._board_message(),
         )
         self._refresh_preview_summary()
+        self._sync_progress_bar()
         self._set_status(f"{'Added' if alive else 'Removed'} ({x}, {y}).")
 
     def build_simulation_settings(self) -> SimulationSettings:
@@ -650,6 +712,16 @@ class GameOfLifeWindow(QMainWindow):
         self.zoom_out_button.clicked.connect(self.board_canvas.zoom_out)
         self.zoom_in_button.clicked.connect(self.board_canvas.zoom_in)
         preview_layout.addWidget(self.board_canvas)
+        self.generation_progress_bar = QProgressBar()
+        self.generation_progress_bar.setRange(0, 0)
+        self.generation_progress_bar.setFormat("Generating")
+        self.generation_progress_bar.setTextVisible(True)
+        self.generation_progress_bar.setVisible(False)
+        preview_layout.addWidget(self.generation_progress_bar)
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setTextVisible(True)
+        self.progress_bar.setVisible(False)
+        preview_layout.addWidget(self.progress_bar)
 
         self.simulation_controls_bar = QWidget()
         simulation_controls_layout = QHBoxLayout(self.simulation_controls_bar)
@@ -799,22 +871,6 @@ class GameOfLifeWindow(QMainWindow):
         interval_ms = max(1, int(1000 / self.fps_spin.value()))
         self._timer.setInterval(interval_ms)
 
-    def _simulation_focus_pattern(
-        self,
-        settings: SimulationSettings,
-        board: Board,
-        *,
-        text_insight: TextConstructionInsight | None = None,
-    ) -> tuple[Pattern | None, bool]:
-        if settings.text is not None:
-            target = (
-                text_insight.plan.target_cells
-                if text_insight is not None
-                else render_text_block_construction(settings.text).target_cells
-            )
-            return (centered_cells(board.config, target), True)
-        return (None, False)
-
     def _set_canvas_focus(self, pattern: Pattern | None, *, show: bool) -> None:
         self.board_canvas.set_focus_pattern(pattern, show=show)
 
@@ -927,8 +983,92 @@ class GameOfLifeWindow(QMainWindow):
             and self.current_settings.text == self._editor_text()
         )
 
+    def _apply_build_result(self, result: SimulationBuildResult) -> None:
+        self._stop_animation()
+        self.current_board = result.board
+        self.current_settings = result.settings
+        self.current_export_pattern = result.export_pattern
+        self.current_export_name = (
+            _suggest_export_name(result.settings.text) if result.settings.text is not None else None
+        )
+        self.current_text_insight = result.text_insight
+        self._current_step_limit = result.settings.steps
+        self._steps_taken = 0
+        self._sync_board_size_controls(result.board)
+        self.board_canvas.set_board(
+            self.current_board,
+            message=self._board_message(),
+        )
+        self._set_canvas_focus(result.focus_pattern, show=result.show_focus)
+        self._sync_export_button()
+        self._refresh_preview_summary()
+        self._sync_progress_bar()
+        self._set_status("Generated." if result.settings.text is not None else "Ready.")
+
+    def _poll_generation_build(self) -> None:
+        self._sync_generation_progress_bar()
+        if self._build_future is None or not self._build_future.done():
+            return
+
+        future = self._build_future
+        self._build_future = None
+        self._build_poll_timer.stop()
+        self._stop_generation_progress()
+        try:
+            result = future.result()
+        except ValueError as exc:
+            self._show_error(str(exc))
+            return
+        except Exception as exc:
+            self._show_error(f"could not generate board: {exc}")
+            return
+        self._apply_build_result(result)
+
     def _refresh_preview_summary(self) -> None:
         self.preview_summary_label.clear()
+
+    def _start_generation_progress(self) -> None:
+        self._build_progress.reset()
+        self.progress_bar.setVisible(False)
+        self._sync_generation_progress_bar()
+        self.generation_progress_bar.setVisible(True)
+        self.source_combo.setEnabled(False)
+        self.text_input.setEnabled(False)
+        self.rebuild_button.setEnabled(False)
+
+    def _stop_generation_progress(self) -> None:
+        self.generation_progress_bar.setVisible(False)
+        self.source_combo.setEnabled(True)
+        self.text_input.setEnabled(True)
+        self._sync_generation_controls()
+        self._sync_progress_bar()
+
+    def _sync_generation_progress_bar(self) -> None:
+        current, total = self._build_progress.snapshot()
+        current = min(current, total)
+        self.generation_progress_bar.setRange(0, total)
+        self.generation_progress_bar.setValue(current)
+        self.generation_progress_bar.setFormat(f"Generating {current} / {total}")
+
+    def _sync_progress_bar(self) -> None:
+        if (
+            self.current_board is None
+            or self.current_settings is None
+            or self.current_settings.text is None
+            or self.current_text_insight is None
+        ):
+            self.progress_bar.setVisible(False)
+            self.progress_bar.setRange(0, 1)
+            self.progress_bar.setValue(0)
+            self.progress_bar.setFormat("")
+            return
+
+        settle_generation = self.current_text_insight.plan.generations
+        progress = min(self.current_board.generation, settle_generation)
+        self.progress_bar.setRange(0, settle_generation)
+        self.progress_bar.setValue(progress)
+        self.progress_bar.setFormat(f"{progress} / {settle_generation}")
+        self.progress_bar.setVisible(True)
 
     def export_plan(self) -> None:
         """Export the latest stable-text seed plus its board size."""
@@ -989,11 +1129,23 @@ class GameOfLifeWindow(QMainWindow):
     def _show_error(self, message: str) -> None:
         QMessageBox.warning(self, "Game of Life Text Studio", message)
 
+    def closeEvent(self, event: QCloseEvent) -> None:  # noqa: N802
+        self._build_poll_timer.stop()
+        self._build_executor.shutdown(wait=False, cancel_futures=True)
+        super().closeEvent(event)
 
-def inspect_text_construction(text: str) -> TextConstructionInsight:
+
+def inspect_text_construction(
+    text: str,
+    *,
+    progress_callback: Callable[[int, int], None] | None = None,
+) -> TextConstructionInsight:
     """Return readable metadata for one text construction request."""
 
-    plan = render_text_block_construction(text)
+    if progress_callback is None:
+        plan = render_text_block_construction(text)
+    else:
+        plan = render_text_block_construction_with_progress(text, progress_callback)
     target_min_x, target_min_y, target_max_x, target_max_y = plan.target_cells.bounds()
     recommended_width, recommended_height = minimum_centered_board_size(plan, padding=4)
     return TextConstructionInsight(
@@ -1006,6 +1158,48 @@ def inspect_text_construction(text: str) -> TextConstructionInsight:
         recommended_width=recommended_width,
         recommended_height=recommended_height,
     )
+
+
+def _build_simulation_result(
+    settings: SimulationSettings,
+    progress_callback: Callable[[int, int], None] | None = None,
+) -> SimulationBuildResult:
+    """Build a simulation payload away from Qt widgets."""
+
+    text_insight: TextConstructionInsight | None = None
+    if settings.text is not None:
+        text_insight = inspect_text_construction(
+            settings.text,
+            progress_callback=progress_callback,
+        )
+    board, export_pattern = build_initial_board(
+        settings,
+        text_plan=text_insight.plan if text_insight is not None else None,
+    )
+    focus_pattern, show_focus = _simulation_focus_pattern(settings, board, text_insight)
+    return SimulationBuildResult(
+        settings=settings,
+        board=board,
+        export_pattern=export_pattern,
+        text_insight=text_insight,
+        focus_pattern=focus_pattern,
+        show_focus=show_focus,
+    )
+
+
+def _simulation_focus_pattern(
+    settings: SimulationSettings,
+    board: Board,
+    text_insight: TextConstructionInsight | None = None,
+) -> tuple[Pattern | None, bool]:
+    if settings.text is not None:
+        target = (
+            text_insight.plan.target_cells
+            if text_insight is not None
+            else render_text_block_construction(settings.text).target_cells
+        )
+        return (centered_cells(board.config, target), True)
+    return (None, False)
 
 
 def _format_text_insight_message(

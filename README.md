@@ -4,7 +4,7 @@ A typed Conway's Game of Life desktop app built with PySide6, centered on determ
 
 ## Requirements
 
-- Python 3.12+
+- Python 3.14+ (`.python-version` pins the current 3.14.4 release)
 - `uv` by Astral
 
 ## Setup
@@ -24,6 +24,7 @@ uv run game-of-life-gui
 - A text-first GUI that opens directly into stable-text generation
 - Auto-sized stable-text boards, with manual board size shown only for random and blank boards
 - A large board canvas with text/board view toggles and zoom
+- A generation progress bar plus a stable-text settle progress bar
 - **Stable text** seeding that synthesizes ASCII text from a deterministic
   multi-glider construction whose blocks settle into the requested still life
 - **Random board** seeding with adjustable density and reproducible seed

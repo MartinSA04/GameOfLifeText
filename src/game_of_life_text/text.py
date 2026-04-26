@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from functools import cache
 from typing import Final
@@ -23,6 +23,7 @@ from .simulator import (
 )
 
 Glyph = tuple[str, ...]
+ProgressCallback = Callable[[int, int], None]
 BLOCK_TEXT_STRIDE: Final[int] = 6
 BLOCK_TEXT_LETTER_SPACING: Final[int] = BLOCK_TEXT_STRIDE
 BLOCK_TEXT_LINE_SPACING: Final[int] = BLOCK_TEXT_STRIDE * 2
@@ -426,6 +427,25 @@ def render_text_block_construction(text: str) -> ConstructionPlan:
     in parallel.
     """
 
+    return _render_text_block_construction(text, progress_callback=None)
+
+
+def render_text_block_construction_with_progress(
+    text: str,
+    progress_callback: ProgressCallback,
+) -> ConstructionPlan:
+    """Return a text construction while reporting ``current, total`` build progress."""
+
+    return _render_text_block_construction(text, progress_callback=progress_callback)
+
+
+def _render_text_block_construction(
+    text: str,
+    *,
+    progress_callback: ProgressCallback | None,
+) -> ConstructionPlan:
+    """Return a text construction with optional block-packing progress reporting."""
+
     normalized_text = _normalize_text(text)
     target_cells = render_text_block_pattern(normalized_text)
     block_origins = _extract_block_origins(target_cells)
@@ -444,10 +464,22 @@ def render_text_block_construction(text: str) -> ConstructionPlan:
         ),
     )
 
-    plan = combine_plans(_pack_block_plans(ordered_origins, center=(center_x, center_y)))
+    total_steps = len(ordered_origins) + 1
+    if progress_callback is not None:
+        progress_callback(0, total_steps)
+    plan = combine_plans(
+        _pack_block_plans(
+            ordered_origins,
+            center=(center_x, center_y),
+            progress_callback=progress_callback,
+            total_steps=total_steps,
+        )
+    )
     if evolve_construction(plan) != target_cells:
         msg = "deterministic block-text construction verification failed; try shorter text"
         raise ValueError(msg)
+    if progress_callback is not None:
+        progress_callback(total_steps, total_steps)
     return ConstructionPlan(
         initial_cells=plan.initial_cells,
         target_cells=target_cells,
@@ -469,6 +501,8 @@ def _pack_block_plans(
     ordered_origins: Sequence[Point],
     *,
     center: tuple[float, float],
+    progress_callback: ProgressCallback | None = None,
+    total_steps: int | None = None,
 ) -> list[ConstructionPlan]:
     """Place each block at the smallest launch period that keeps all glider paths apart.
 
@@ -552,6 +586,8 @@ def _pack_block_plans(
         if not accepted:
             msg = f"could not pack block at {origin!r} within {_MAX_PACK_SLOT} slots"
             raise ValueError(msg)
+        if progress_callback is not None:
+            progress_callback(len(placed), total_steps or len(ordered_origins))
     return [block.plan for block in placed]
 
 

@@ -6,7 +6,7 @@ readme = "README.md"
 authors = [
     { name = "Martin Sundal Aspås", email = "martin.s.aspas@gmail.com" }
 ]
-requires-python = ">=3.12"
+requires-python = ">=3.14"
 dependencies = [
     "numpy>=2.1.0",
     "pydantic>=2.13.3",
@@ -38,7 +38,7 @@ packages = ["src/game_of_life_text"]
 testpaths = ["tests"]
 
 [tool.ruff]
-target-version = "py312"
+target-version = "py314"
 line-length = 100
 src = ["src", "tests"]
 
