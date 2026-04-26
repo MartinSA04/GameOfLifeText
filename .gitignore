@@ -12,3 +12,5 @@ wheels/
 # Profiling artifacts
 profiling/*.lprof
 profiling/*.txt
+
+.codex
