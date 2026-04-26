@@ -28,9 +28,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse CLI arguments for the profiling run."""
 
     parser = argparse.ArgumentParser(
-        description=(
-            "Run kernprof on render_text_block_construction and save a plain text report."
-        )
+        description=("Run kernprof on render_text_block_construction and save a plain text report.")
     )
     source_group = parser.add_mutually_exclusive_group()
     source_group.add_argument(

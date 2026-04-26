@@ -530,9 +530,7 @@ def _pack_block_plans(
                 ):
                     continue
 
-                candidate = plan_block(
-                    origin, orientation=orientation, extra_periods=extra_periods
-                )
+                candidate = plan_block(origin, orientation=orientation, extra_periods=extra_periods)
                 tentative = combine_plans([tb.plan for tb in touching] + [candidate])
                 expected_patterns = [tb.plan.target_cells for tb in touching]
                 expected_patterns.append(candidate.target_cells)

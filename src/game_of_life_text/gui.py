@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -10,6 +11,7 @@ from PySide6.QtCore import QPoint, QRect, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QMouseEvent, QPainter, QPaintEvent, QPen, QWheelEvent
 from PySide6.QtWidgets import (
     QApplication,
+    QButtonGroup,
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
@@ -31,9 +33,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from .construction import center_construction, minimum_centered_board_size
+from .construction import ConstructionPlan, center_construction, minimum_centered_board_size
 from .simulator import Board, Pattern, SimulationConfig, centered_cells, random_cells
 from .text import render_text_block_construction
+
+TEXT_SOURCE = "Stable text"
+RANDOM_SOURCE = "Random board"
+BLANK_SOURCE = "Blank board"
+MANUAL_BOARD_SOURCES = frozenset((RANDOM_SOURCE, BLANK_SOURCE))
 
 APP_STYLESHEET = """
 QMainWindow {
@@ -70,6 +77,7 @@ QPushButton:checked {
     background: #1e3d31;
     color: #f7f3ea;
     border-color: #1e3d31;
+    font-weight: 700;
 }
 QLineEdit, QPlainTextEdit, QSpinBox, QDoubleSpinBox, QComboBox {
     background: #fffdf9;
@@ -117,13 +125,18 @@ QCheckBox::indicator:checked {
     background: #1e3d31;
     border-radius: 4px;
 }
-QLabel#headline {
-    font-size: 20px;
-    font-weight: 700;
-    color: #1f2822;
+QLabel#insightLabel {
+    background: #f1eadf;
+    border: 1px solid #d8c8b3;
+    border-radius: 10px;
+    color: #314039;
+    padding: 8px 10px;
 }
-QLabel#subhead {
-    color: #57655d;
+QPushButton#primaryAction {
+    background: #1e3d31;
+    color: #f7f3ea;
+    border-color: #1e3d31;
+    font-weight: 700;
 }
 """
 
@@ -142,6 +155,20 @@ class SimulationSettings(BaseModel):
     steps: int | None = Field(default=None, ge=0)
     text: str | None = None
     wrap: bool = True
+
+
+@dataclass(frozen=True, slots=True)
+class TextConstructionInsight:
+    """Readable metadata about the current text construction."""
+
+    plan: ConstructionPlan
+    line_count: int
+    character_count: int
+    block_count: int
+    target_width: int
+    target_height: int
+    recommended_width: int
+    recommended_height: int
 
 
 class BoardCanvas(QWidget):
@@ -163,7 +190,7 @@ class BoardCanvas(QWidget):
         self._focus_pattern: Pattern | None = None
         self._show_focus_region = False
         self._last_drag_cell: tuple[int, int] | None = None
-        self._message = "No board loaded"
+        self._message = ""
         self._zoom_factor = 1.0
         self.setMinimumSize(720, 720)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
@@ -278,7 +305,7 @@ class BoardCanvas(QWidget):
             painter.drawText(
                 panel_rect,
                 Qt.AlignmentFlag.AlignCenter,
-                "Choose settings on the left,\nthen build a board.",
+                "No board",
             )
             return
 
@@ -438,13 +465,15 @@ class GameOfLifeWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.current_board: Board | None = None
+        self.current_settings: SimulationSettings | None = None
         self.current_export_pattern: Pattern | None = None
         self.current_export_name: str | None = None
+        self.current_text_insight: TextConstructionInsight | None = None
         self._current_step_limit: int | None = None
         self._steps_taken = 0
         self._timer = QTimer(self)
         self._timer.timeout.connect(self.advance_generation)
-        self.setWindowTitle("Game of Life Studio")
+        self.setWindowTitle("Game of Life Text Studio")
         self.resize(1280, 920)
         self.setStyleSheet(APP_STYLESHEET)
         self._build_ui()
@@ -452,34 +481,48 @@ class GameOfLifeWindow(QMainWindow):
         self.board_canvas.view_changed.connect(self._sync_view_controls)
         self._sync_source_controls()
         self._sync_view_controls()
-        self.apply_simulation_settings()
+        self._refresh_preview_summary()
 
     def apply_simulation_settings(self) -> None:
         """Build a new board from the current controls."""
 
+        text_insight: TextConstructionInsight | None = None
         try:
             settings = self.build_simulation_settings()
-            board, export_pattern = build_initial_board(settings)
-            focus_pattern, show_focus = self._simulation_focus_pattern(settings, board)
+            if settings.text is not None:
+                text_insight = inspect_text_construction(settings.text)
+            board, export_pattern = build_initial_board(
+                settings,
+                text_plan=text_insight.plan if text_insight is not None else None,
+            )
+            focus_pattern, show_focus = self._simulation_focus_pattern(
+                settings,
+                board,
+                text_insight=text_insight,
+            )
         except ValueError as exc:
             self._show_error(str(exc))
             return
 
         self._stop_animation()
         self.current_board = board
+        self.current_settings = settings
         self.current_export_pattern = export_pattern
         self.current_export_name = (
             _suggest_export_name(settings.text) if settings.text is not None else None
         )
+        self.current_text_insight = text_insight
         self._current_step_limit = settings.steps
         self._steps_taken = 0
+        self._sync_board_size_controls(board)
         self.board_canvas.set_board(
             self.current_board,
-            message=self._board_message("Simulation ready"),
+            message=self._board_message(),
         )
         self._set_canvas_focus(focus_pattern, show=show_focus)
         self._sync_export_button()
-        self._set_status("Simulation board rebuilt.")
+        self._refresh_preview_summary()
+        self._set_status("Generated." if settings.text is not None else "Ready.")
 
     def advance_generation(self) -> None:
         """Advance the current board by one generation."""
@@ -495,9 +538,10 @@ class GameOfLifeWindow(QMainWindow):
         self._steps_taken += 1
         self.board_canvas.set_board(
             self.current_board,
-            message=self._board_message("Simulation running"),
+            message=self._board_message(),
         )
-        self._set_status("Advanced one generation.")
+        self._refresh_preview_summary()
+        self._set_status(f"Generation {self.current_board.generation}.")
 
     def paint_simulation_cell(self, x: int, y: int, alive: bool) -> None:
         """Apply one interactive cell edit to the current board."""
@@ -514,12 +558,10 @@ class GameOfLifeWindow(QMainWindow):
         )
         self.board_canvas.set_board(
             self.current_board,
-            message=self._board_message("Simulation edited"),
+            message=self._board_message(),
         )
-        self._set_status(
-            f"{'Added' if alive else 'Removed'} cell at ({x}, {y}). "
-            "Left-drag adds, right-drag erases."
-        )
+        self._refresh_preview_summary()
+        self._set_status(f"{'Added' if alive else 'Removed'} ({x}, {y}).")
 
     def build_simulation_settings(self) -> SimulationSettings:
         """Collect validated settings from the form."""
@@ -529,12 +571,16 @@ class GameOfLifeWindow(QMainWindow):
         seed: int | None = None
         text: str | None = None
 
-        if source == "Random board":
+        if source == RANDOM_SOURCE:
             density = self.random_density_spin.value()
             seed = parse_optional_int(self.seed_input.text())
+        elif source == BLANK_SOURCE:
+            density = 0.0
         else:
             text = self.text_input.toPlainText().rstrip("\n")
-            render_text_block_construction(text)
+            if text == "":
+                msg = "text cannot be empty"
+                raise ValueError(msg)
 
         return SimulationSettings(
             width=self.width_spin.value(),
@@ -545,7 +591,7 @@ class GameOfLifeWindow(QMainWindow):
             fps=self.fps_spin.value(),
             steps=parse_optional_int(self.steps_input.text(), minimum=0),
             text=text,
-            wrap=self.wrap_checkbox.isChecked(),
+            wrap=self.wrap_checkbox.isChecked() if source in MANUAL_BOARD_SOURCES else False,
         )
 
     def _build_ui(self) -> None:
@@ -555,19 +601,6 @@ class GameOfLifeWindow(QMainWindow):
         layout = QVBoxLayout(central)
         layout.setContentsMargins(14, 14, 14, 14)
         layout.setSpacing(12)
-
-        header = QWidget()
-        header_layout = QVBoxLayout(header)
-        header_layout.setContentsMargins(4, 2, 4, 2)
-        headline = QLabel("Game of Life Studio")
-        headline.setObjectName("headline")
-        subhead = QLabel(
-            "Random boards, interactive drawing, and stable text from glider syntheses."
-        )
-        subhead.setObjectName("subhead")
-        header_layout.addWidget(headline)
-        header_layout.addWidget(subhead)
-        layout.addWidget(header)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
         splitter.setChildrenCollapsible(False)
@@ -579,19 +612,31 @@ class GameOfLifeWindow(QMainWindow):
         preview_layout = QVBoxLayout(preview_panel)
         preview_layout.setContentsMargins(0, 0, 0, 0)
         preview_layout.setSpacing(10)
-        self.status_label = QLabel("Ready.")
+        self.status_label = QLabel()
+        self.status_label.setVisible(False)
         preview_layout.addWidget(self.status_label)
+        self.preview_summary_label = QLabel()
+        self.preview_summary_label.setObjectName("insightLabel")
+        self.preview_summary_label.setWordWrap(True)
+        self.preview_summary_label.setVisible(False)
         view_bar = QWidget()
         view_layout = QHBoxLayout(view_bar)
         view_layout.setContentsMargins(0, 0, 0, 0)
         view_layout.setSpacing(8)
-        self.full_view_button = QPushButton("Full Board")
-        self.focus_view_button = QPushButton("Focus Content")
+        self.full_view_button = QPushButton("Board")
+        self.full_view_button.setCheckable(True)
+        self.focus_view_button = QPushButton("Text")
+        self.focus_view_button.setCheckable(True)
+        self.view_button_group = QButtonGroup(self)
+        self.view_button_group.setExclusive(True)
+        self.view_button_group.addButton(self.full_view_button)
+        self.view_button_group.addButton(self.focus_view_button)
         self.zoom_out_button = QPushButton("-")
         self.zoom_out_button.setFixedWidth(40)
         self.zoom_in_button = QPushButton("+")
         self.zoom_in_button.setFixedWidth(40)
-        self.view_state_label = QLabel("View: board | Zoom 1.00x")
+        self.view_state_label = QLabel("Preview: board | Zoom 1.00x")
+        self.view_state_label.setVisible(False)
         view_layout.addWidget(self.full_view_button)
         view_layout.addWidget(self.focus_view_button)
         view_layout.addStretch(1)
@@ -605,6 +650,32 @@ class GameOfLifeWindow(QMainWindow):
         self.zoom_out_button.clicked.connect(self.board_canvas.zoom_out)
         self.zoom_in_button.clicked.connect(self.board_canvas.zoom_in)
         preview_layout.addWidget(self.board_canvas)
+
+        self.simulation_controls_bar = QWidget()
+        simulation_controls_layout = QHBoxLayout(self.simulation_controls_bar)
+        simulation_controls_layout.setContentsMargins(0, 0, 0, 0)
+        simulation_controls_layout.setSpacing(8)
+        self.draw_button = QCheckBox("Draw mode")
+        self.play_button = QPushButton("Run")
+        self.play_button.setCheckable(True)
+        self.play_button.toggled.connect(self._toggle_animation)
+        self.step_button = QPushButton("Step")
+        self.step_button.clicked.connect(self.advance_generation)
+        self.fps_spin = QDoubleSpinBox()
+        self.fps_spin.setRange(0.1, 120.0)
+        self.fps_spin.setValue(12.0)
+        self.fps_spin.setSingleStep(1.0)
+        self.fps_spin.valueChanged.connect(self._sync_timer_interval)
+        self.steps_input = QLineEdit()
+        self.steps_input.setFixedWidth(84)
+        self.steps_input.setVisible(False)
+        simulation_controls_layout.addWidget(self.draw_button)
+        simulation_controls_layout.addWidget(self.play_button)
+        simulation_controls_layout.addWidget(self.step_button)
+        simulation_controls_layout.addStretch(1)
+        simulation_controls_layout.addWidget(QLabel("Speed"))
+        simulation_controls_layout.addWidget(self.fps_spin)
+        preview_layout.addWidget(self.simulation_controls_bar)
         self.draw_button.toggled.connect(self.board_canvas.set_draw_enabled)
 
         splitter.addWidget(controls)
@@ -622,78 +693,65 @@ class GameOfLifeWindow(QMainWindow):
         layout = QVBoxLayout(widget)
         layout.setSpacing(10)
 
-        seed_group = QGroupBox("Seed")
-        seed_layout = QVBoxLayout(seed_group)
+        generator_group = QGroupBox("Setup")
+        generator_layout = QVBoxLayout(generator_group)
         seed_form = QFormLayout()
         self.source_combo = QComboBox()
-        self.source_combo.addItems(("Random board", "Stable text"))
+        self.source_combo.addItems((TEXT_SOURCE, RANDOM_SOURCE, BLANK_SOURCE))
         self.source_combo.currentIndexChanged.connect(self._sync_source_controls)
-        seed_form.addRow("Source", self.source_combo)
-        seed_layout.addLayout(seed_form)
-
-        self.random_frame = self._build_random_seed_controls()
+        seed_form.addRow("Mode", self.source_combo)
+        generator_layout.addLayout(seed_form)
         self.text_frame = self._build_text_seed_controls()
-        seed_layout.addWidget(self.random_frame)
-        seed_layout.addWidget(self.text_frame)
-        layout.addWidget(seed_group)
+        self.random_frame = self._build_random_seed_controls()
+        generator_layout.addWidget(self.text_frame)
+        generator_layout.addWidget(self.random_frame)
+        layout.addWidget(generator_group)
 
-        board_group = QGroupBox("Board")
-        board_form = QFormLayout(board_group)
-        self.width_spin = QSpinBox()
-        self.width_spin.setRange(1, 400)
-        self.width_spin.setValue(40)
-        self.height_spin = QSpinBox()
-        self.height_spin.setRange(1, 300)
-        self.height_spin.setValue(20)
-        self.wrap_checkbox = QCheckBox("Toroidal wrapping")
-        self.wrap_checkbox.setChecked(True)
-        self.fps_spin = QDoubleSpinBox()
-        self.fps_spin.setRange(0.1, 120.0)
-        self.fps_spin.setValue(12.0)
-        self.fps_spin.setSingleStep(1.0)
-        self.fps_spin.valueChanged.connect(self._sync_timer_interval)
-        self.steps_input = QLineEdit()
-        self.steps_input.setPlaceholderText("Blank = continuous")
-        board_form.addRow("Width", self.width_spin)
-        board_form.addRow("Height", self.height_spin)
-        board_form.addRow("FPS", self.fps_spin)
-        board_form.addRow("Steps", self.steps_input)
-        board_form.addRow("", self.wrap_checkbox)
-        layout.addWidget(board_group)
-
-        actions_group = QGroupBox("Actions")
-        actions_layout = QHBoxLayout(actions_group)
-        self.rebuild_button = QPushButton("Build Board")
+        primary_row = QHBoxLayout()
+        primary_row.setContentsMargins(0, 0, 0, 0)
+        self.rebuild_button = QPushButton("Generate")
+        self.rebuild_button.setObjectName("primaryAction")
         self.rebuild_button.clicked.connect(self.apply_simulation_settings)
-        self.draw_button = QPushButton("Draw Cells")
-        self.draw_button.setCheckable(True)
-        self.play_button = QPushButton("Play")
-        self.play_button.setCheckable(True)
-        self.play_button.toggled.connect(self._toggle_animation)
-        self.step_button = QPushButton("Step")
-        self.step_button.clicked.connect(self.advance_generation)
         self.export_button = QPushButton("Export Plan")
         self.export_button.clicked.connect(self.export_plan)
-        actions_layout.addWidget(self.rebuild_button)
-        actions_layout.addWidget(self.draw_button)
-        actions_layout.addWidget(self.play_button)
-        actions_layout.addWidget(self.step_button)
-        actions_layout.addWidget(self.export_button)
-        layout.addWidget(actions_group)
+        primary_row.addWidget(self.rebuild_button)
+        primary_row.addWidget(self.export_button)
+        layout.addLayout(primary_row)
+
+        self.board_group = QGroupBox("Board")
+        board_layout = QVBoxLayout(self.board_group)
+        board_form = QFormLayout()
+        self.width_spin = QSpinBox()
+        self.width_spin.setRange(1, 400)
+        self.width_spin.setValue(240)
+        self.width_spin.valueChanged.connect(self._sync_generation_controls)
+        self.height_spin = QSpinBox()
+        self.height_spin.setRange(1, 300)
+        self.height_spin.setValue(160)
+        self.height_spin.valueChanged.connect(self._sync_generation_controls)
+        self.wrap_checkbox = QCheckBox("Toroidal wrapping")
+        self.wrap_checkbox.setChecked(False)
+        board_form.addRow("Width", self.width_spin)
+        board_form.addRow("Height", self.height_spin)
+        board_form.addRow("", self.wrap_checkbox)
+        board_layout.addLayout(board_form)
+        layout.addWidget(self.board_group)
         layout.addStretch(1)
         return widget
 
     def _build_random_seed_controls(self) -> QFrame:
         frame = QFrame()
-        form = QFormLayout(frame)
+        layout = QVBoxLayout(frame)
+        layout.setContentsMargins(0, 0, 0, 0)
+        form = QFormLayout()
         self.random_density_spin = QDoubleSpinBox()
         self.random_density_spin.setRange(0.0, 1.0)
         self.random_density_spin.setSingleStep(0.01)
         self.random_density_spin.setValue(0.18)
         self.seed_input = QLineEdit()
-        self.seed_input.setPlaceholderText("Blank = random")
         form.addRow("Density", self.random_density_spin)
         form.addRow("Seed", self.seed_input)
+        layout.addLayout(form)
         return frame
 
     def _build_text_seed_controls(self) -> QFrame:
@@ -701,26 +759,33 @@ class GameOfLifeWindow(QMainWindow):
         layout = QVBoxLayout(frame)
         layout.setContentsMargins(0, 0, 0, 0)
         self.text_input = QPlainTextEdit()
-        self.text_input.setPlaceholderText("Enter ASCII text")
-        self.text_input.setFixedHeight(110)
+        self.text_input.setFixedHeight(150)
+        self.text_input.textChanged.connect(self._sync_generation_controls)
         layout.addWidget(self.text_input)
+        self.text_summary_label = QLabel()
+        self.text_summary_label.setObjectName("insightLabel")
+        self.text_summary_label.setWordWrap(True)
+        self.text_summary_label.setVisible(False)
+        self.fit_text_button = QPushButton("Fit Board")
+        self.fit_text_button.clicked.connect(self.apply_recommended_text_board_size)
+        self.fit_text_button.setVisible(False)
+        self.fit_text_button.setEnabled(False)
         return frame
 
     def _toggle_animation(self, checked: bool) -> None:
         if checked:
             if self.current_board is None:
-                self.apply_simulation_settings()
-            if self.current_board is None:
                 self.play_button.setChecked(False)
+                self._set_status("Build a board first.")
                 return
             self.play_button.setText("Pause")
             self._sync_timer_interval()
             self._timer.start()
-            self._set_status("Animation running.")
+            self._set_status("Running.")
             return
 
         self._timer.stop()
-        self.play_button.setText("Play")
+        self.play_button.setText("Run")
 
     def _stop_animation(self) -> None:
         self._timer.stop()
@@ -728,7 +793,7 @@ class GameOfLifeWindow(QMainWindow):
             self.play_button.blockSignals(True)
             self.play_button.setChecked(False)
             self.play_button.blockSignals(False)
-        self.play_button.setText("Play")
+        self.play_button.setText("Run")
 
     def _sync_timer_interval(self) -> None:
         interval_ms = max(1, int(1000 / self.fps_spin.value()))
@@ -738,9 +803,15 @@ class GameOfLifeWindow(QMainWindow):
         self,
         settings: SimulationSettings,
         board: Board,
+        *,
+        text_insight: TextConstructionInsight | None = None,
     ) -> tuple[Pattern | None, bool]:
         if settings.text is not None:
-            target = render_text_block_construction(settings.text).target_cells
+            target = (
+                text_insight.plan.target_cells
+                if text_insight is not None
+                else render_text_block_construction(settings.text).target_cells
+            )
             return (centered_cells(board.config, target), True)
         return (None, False)
 
@@ -753,27 +824,111 @@ class GameOfLifeWindow(QMainWindow):
         showing_focus = self.board_canvas.is_showing_focus_region()
         self.full_view_button.setEnabled(has_board)
         self.focus_view_button.setEnabled(has_board and has_focus)
+        self.full_view_button.setVisible(has_focus)
+        self.focus_view_button.setVisible(has_focus)
+        self.full_view_button.blockSignals(True)
+        self.focus_view_button.blockSignals(True)
+        self.full_view_button.setChecked(has_board and not showing_focus)
+        self.focus_view_button.setChecked(has_board and showing_focus)
+        self.full_view_button.blockSignals(False)
+        self.focus_view_button.blockSignals(False)
         self.zoom_in_button.setEnabled(has_board)
         self.zoom_out_button.setEnabled(has_board)
         mode = "content" if showing_focus else "board"
         if not has_board:
             mode = "none"
-        self.view_state_label.setText(f"View: {mode} | Zoom {self.board_canvas.zoom_factor():.2f}x")
+        self.view_state_label.setText(
+            f"Preview: {mode} | Zoom {self.board_canvas.zoom_factor():.2f}x"
+        )
 
     def _sync_source_controls(self) -> None:
         source = self.source_combo.currentText()
-        self.random_frame.setVisible(source == "Random board")
-        self.text_frame.setVisible(source == "Stable text")
-        if source == "Stable text":
-            self.width_spin.setValue(max(self.width_spin.value(), 220))
-            self.height_spin.setValue(max(self.height_spin.value(), 140))
-            self.wrap_checkbox.setChecked(False)
+        text_mode = source == TEXT_SOURCE
+        manual_board_mode = source in MANUAL_BOARD_SOURCES
+        self.random_frame.setVisible(source == RANDOM_SOURCE)
+        self.text_frame.setVisible(text_mode)
+        self.board_group.setVisible(manual_board_mode)
+        if text_mode:
+            self.rebuild_button.setText("Generate")
+        elif source == BLANK_SOURCE:
+            self.rebuild_button.setText("Blank")
+        else:
+            self.rebuild_button.setText("Randomize")
+        self._sync_generation_controls()
         self._sync_export_button()
 
     def _sync_export_button(self) -> None:
         source = self.source_combo.currentText()
-        has_export_pattern = self.current_export_pattern is not None and bool(self.current_export_pattern)
-        self.export_button.setEnabled(source == "Stable text" and has_export_pattern)
+        has_export_pattern = self.current_export_pattern is not None and bool(
+            self.current_export_pattern
+        )
+        can_export = (
+            source == TEXT_SOURCE and has_export_pattern and self._generated_text_matches_editor()
+        )
+        self.export_button.setVisible(can_export)
+        self.export_button.setEnabled(can_export)
+
+    def _sync_board_size_controls(self, board: Board) -> None:
+        self.width_spin.blockSignals(True)
+        self.height_spin.blockSignals(True)
+        self.width_spin.setValue(board.config.width)
+        self.height_spin.setValue(board.config.height)
+        self.width_spin.blockSignals(False)
+        self.height_spin.blockSignals(False)
+        self._sync_generation_controls()
+
+    def _sync_generation_controls(self) -> None:
+        if self.source_combo.currentText() != TEXT_SOURCE:
+            self.text_summary_label.clear()
+            self.fit_text_button.setEnabled(False)
+            self.rebuild_button.setEnabled(True)
+            self._sync_export_button()
+            return
+
+        text = self._editor_text()
+        if text == "":
+            self.text_summary_label.clear()
+            self.fit_text_button.setEnabled(False)
+            self.rebuild_button.setEnabled(False)
+            self._sync_export_button()
+            return
+
+        self.rebuild_button.setEnabled(True)
+        if self._generated_text_matches_editor():
+            assert self.current_text_insight is not None
+            self.text_summary_label.clear()
+            self.fit_text_button.setEnabled(True)
+            self._sync_export_button()
+            return
+
+        self.text_summary_label.clear()
+        self.fit_text_button.setEnabled(False)
+        self._sync_export_button()
+
+    def apply_recommended_text_board_size(self) -> None:
+        """Apply the current text construction's recommended board size."""
+
+        if not self._generated_text_matches_editor():
+            return
+        assert self.current_text_insight is not None
+        self.width_spin.setValue(self.current_text_insight.recommended_width)
+        self.height_spin.setValue(self.current_text_insight.recommended_height)
+        self.wrap_checkbox.setChecked(False)
+        self._set_status("Fit.")
+
+    def _editor_text(self) -> str:
+        return self.text_input.toPlainText().rstrip("\n")
+
+    def _generated_text_matches_editor(self) -> bool:
+        return (
+            self.current_settings is not None
+            and self.current_settings.text is not None
+            and self.current_text_insight is not None
+            and self.current_settings.text == self._editor_text()
+        )
+
+    def _refresh_preview_summary(self) -> None:
+        self.preview_summary_label.clear()
 
     def export_plan(self) -> None:
         """Export the latest stable-text seed plus its board size."""
@@ -807,20 +962,76 @@ class GameOfLifeWindow(QMainWindow):
             return
         self._set_status(f"Exported plan to {path}.")
 
-    def _board_message(self, prefix: str) -> str:
+    def _board_message(self) -> str:
         if self.current_board is None:
-            return prefix
+            return ""
+        if self.current_settings is not None and self.current_settings.text is not None:
+            if self.current_text_insight is not None:
+                settle = self.current_text_insight.plan.generations
+                generation = (
+                    f"{self.current_board.generation}/{settle}"
+                    if self.current_board.generation < settle
+                    else str(self.current_board.generation)
+                )
+            else:
+                generation = str(self.current_board.generation)
+            return f"Gen {generation} | Live {self.current_board.alive_count}"
         return (
-            f"{prefix} | generation {self.current_board.generation} | "
-            f"alive {self.current_board.alive_count} | "
-            f"wrap {'on' if self.current_board.config.wrap else 'off'}"
+            f"Gen {self.current_board.generation} | "
+            f"Live {self.current_board.alive_count} | "
+            f"Wrap {'on' if self.current_board.config.wrap else 'off'}"
         )
 
     def _set_status(self, message: str) -> None:
         self.status_label.setText(message)
+        self.status_label.setVisible(message != "")
 
     def _show_error(self, message: str) -> None:
-        QMessageBox.warning(self, "Game of Life Studio", message)
+        QMessageBox.warning(self, "Game of Life Text Studio", message)
+
+
+def inspect_text_construction(text: str) -> TextConstructionInsight:
+    """Return readable metadata for one text construction request."""
+
+    plan = render_text_block_construction(text)
+    target_min_x, target_min_y, target_max_x, target_max_y = plan.target_cells.bounds()
+    recommended_width, recommended_height = minimum_centered_board_size(plan, padding=4)
+    return TextConstructionInsight(
+        plan=plan,
+        line_count=max(1, len(text.splitlines())),
+        character_count=sum(1 for character in text if character != "\n"),
+        block_count=len(plan.target_cells) // 4,
+        target_width=target_max_x - target_min_x + 1,
+        target_height=target_max_y - target_min_y + 1,
+        recommended_width=recommended_width,
+        recommended_height=recommended_height,
+    )
+
+
+def _format_text_insight_message(
+    insight: TextConstructionInsight,
+    *,
+    selected_width: int,
+    selected_height: int,
+) -> str:
+    """Render a compact user-facing summary of a text construction."""
+
+    if (
+        selected_width >= insight.recommended_width
+        and selected_height >= insight.recommended_height
+    ):
+        fit_status = "fits"
+    else:
+        fit_status = "expand"
+    return (
+        f"{insight.character_count} chars"
+        f"  |  {insight.line_count} line(s)"
+        f"  |  {insight.block_count} blocks"
+        f"  |  settle {insight.plan.generations}"
+        f"  |  final {insight.target_width} x {insight.target_height}"
+        f"  |  min {insight.recommended_width} x {insight.recommended_height}"
+        f"  |  {fit_status}"
+    )
 
 
 def parse_optional_int(text: str, *, minimum: int | None = None) -> int | None:
@@ -840,19 +1051,19 @@ def parse_optional_int(text: str, *, minimum: int | None = None) -> int | None:
     return value
 
 
-def build_initial_board(settings: SimulationSettings) -> tuple[Board, Pattern | None]:
+def build_initial_board(
+    settings: SimulationSettings,
+    *,
+    text_plan: ConstructionPlan | None = None,
+) -> tuple[Board, Pattern | None]:
     """Construct the initial board from validated settings."""
 
     config = SimulationConfig(width=settings.width, height=settings.height, wrap=settings.wrap)
     export_pattern: Pattern | None = None
     if settings.text is not None:
-        plan = render_text_block_construction(settings.text)
+        plan = text_plan if text_plan is not None else render_text_block_construction(settings.text)
         width, height = minimum_centered_board_size(plan, padding=4)
-        config = SimulationConfig(
-            width=max(settings.width, width),
-            height=max(settings.height, height),
-            wrap=settings.wrap,
-        )
+        config = SimulationConfig(width=width, height=height, wrap=False)
         live_cells = center_construction(config, plan)
         export_pattern = live_cells
     else:
@@ -865,7 +1076,9 @@ def _suggest_export_name(text: str | None) -> str:
 
     if text is None:
         return "stable_text_plan.txt"
-    cleaned = "".join(character.lower() if character.isalnum() else "_" for character in text.strip())
+    cleaned = "".join(
+        character.lower() if character.isalnum() else "_" for character in text.strip()
+    )
     normalized = "_".join(part for part in cleaned.split("_") if part)
     if not normalized:
         normalized = "stable_text"

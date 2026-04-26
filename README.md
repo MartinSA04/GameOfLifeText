@@ -1,6 +1,6 @@
-# Game of Life
+# Game of Life Text Studio
 
-A small, typed Conway's Game of Life desktop app built with PySide6.
+A typed Conway's Game of Life desktop app built with PySide6, centered on deterministic text generation from glider syntheses.
 
 ## Requirements
 
@@ -21,13 +21,15 @@ uv run game-of-life-gui
 
 ## Features
 
-- A large board canvas with full-board and content-focused views, plus zoom
-- **Random board** seeding with an adjustable density and reproducible seed
+- A text-first GUI that opens directly into stable-text generation
+- Auto-sized stable-text boards, with manual board size shown only for random and blank boards
+- A large board canvas with text/board view toggles and zoom
 - **Stable text** seeding that synthesizes ASCII text from a deterministic
   multi-glider construction whose blocks settle into the requested still life
-- **Drawing**: toggle "Draw Cells" and left-drag to add cells, right-drag to
-  erase
-- Play/pause and step controls with adjustable FPS and an optional step limit
+- **Random board** seeding with adjustable density and reproducible seed
+- **Blank board** seeding for drawing from scratch
+- **Draw mode** for left-drag add and right-drag erase
+- Run/pause and step controls with adjustable speed
 
 The block-text constructor schedules each 2x2 block from the center outward,
 launching its two-glider synthesis on a farther ring with a larger delay so

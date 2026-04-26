@@ -15,7 +15,7 @@ from PySide6.QtWidgets import QApplication
 
 from game_of_life_text import gui as gui_module
 from game_of_life_text.construction import center_construction
-from game_of_life_text.gui import GameOfLifeWindow, parse_optional_int
+from game_of_life_text.gui import GameOfLifeWindow, inspect_text_construction, parse_optional_int
 from game_of_life_text.simulator import centered_cells
 from game_of_life_text.text import render_text_block_construction
 
@@ -31,19 +31,20 @@ def qapp() -> QApplication:
 
 
 def test_gui_can_build_block_text_construction_board(qapp: QApplication) -> None:
-    """The GUI should build glider-based block text boards from form controls."""
+    """The GUI should auto-size and build glider-based block text boards."""
 
     _ = qapp
     window = GameOfLifeWindow()
     try:
         window.source_combo.setCurrentText("Stable text")
         window.text_input.setPlainText("I")
-        window.width_spin.setValue(220)
-        window.height_spin.setValue(140)
 
         window.apply_simulation_settings()
 
         assert window.current_board is not None
+        insight = inspect_text_construction("I")
+        assert window.current_board.config.width == insight.recommended_width
+        assert window.current_board.config.height == insight.recommended_height
         plan = render_text_block_construction("I")
         initial_cells = window.current_board.live_cells
         board = window.current_board
@@ -52,6 +53,66 @@ def test_gui_can_build_block_text_construction_board(qapp: QApplication) -> None
 
         assert board.live_cells != initial_cells
         assert board.step().live_cells == board.live_cells
+    finally:
+        window.close()
+
+
+def test_gui_defaults_to_text_generation_workflow(qapp: QApplication) -> None:
+    """The window should open in text mode without instructional filler copy."""
+
+    _ = qapp
+    window = GameOfLifeWindow()
+    try:
+        assert window.source_combo.currentText() == "Stable text"
+        assert window.rebuild_button.text() == "Generate"
+        assert window.text_input.toPlainText() == ""
+        assert window.text_summary_label.text() == ""
+        assert window.preview_summary_label.text() == ""
+        assert not window.text_frame.isHidden()
+        assert window.board_group.isHidden()
+        assert not window.rebuild_button.isEnabled()
+        assert window.current_text_insight is None
+    finally:
+        window.close()
+
+
+def test_gui_only_runs_text_generation_when_generate_is_used(
+    qapp: QApplication,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Editing text should not invoke the planner before the generate action."""
+
+    _ = qapp
+    calls: list[str] = []
+    original_inspect = gui_module.inspect_text_construction
+
+    def tracked_inspect(text: str) -> object:
+        calls.append(text)
+        return original_inspect(text)
+
+    monkeypatch.setattr(gui_module, "inspect_text_construction", tracked_inspect)
+    window = GameOfLifeWindow()
+    try:
+        window.text_input.setPlainText("HI")
+        window.width_spin.setValue(260)
+        window.height_spin.setValue(180)
+        qapp.processEvents()
+
+        assert calls == []
+        assert window.text_summary_label.text() == ""
+        assert window.rebuild_button.isEnabled()
+        assert window.current_board is None
+
+        QTest.mouseClick(window.play_button, Qt.MouseButton.LeftButton)
+
+        assert calls == []
+        assert window.current_board is None
+
+        QTest.mouseClick(window.rebuild_button, Qt.MouseButton.LeftButton)
+
+        assert calls == ["HI"]
+        assert window.text_summary_label.text() == ""
+        assert window.current_text_insight is not None
     finally:
         window.close()
 
@@ -72,6 +133,89 @@ def test_gui_can_build_random_board(qapp: QApplication) -> None:
 
         assert window.current_board is not None
         assert window.current_board.alive_count > 0
+    finally:
+        window.close()
+
+
+def test_gui_can_build_blank_board(qapp: QApplication) -> None:
+    """Blank mode should create an empty board using manual board dimensions."""
+
+    _ = qapp
+    window = GameOfLifeWindow()
+    try:
+        window.source_combo.setCurrentText("Blank board")
+        window.width_spin.setValue(30)
+        window.height_spin.setValue(20)
+
+        window.apply_simulation_settings()
+
+        assert window.current_board is not None
+        assert window.current_board.config.width == 30
+        assert window.current_board.config.height == 20
+        assert window.current_board.alive_count == 0
+    finally:
+        window.close()
+
+
+def test_gui_only_shows_board_controls_for_manual_board_modes(qapp: QApplication) -> None:
+    """Board size belongs to random and blank modes, not text generation."""
+
+    _ = qapp
+    window = GameOfLifeWindow()
+    try:
+        window.show()
+        qapp.processEvents()
+
+        assert not window.board_group.isVisibleTo(window)
+
+        window.source_combo.setCurrentText("Random board")
+        qapp.processEvents()
+
+        assert window.board_group.isVisibleTo(window)
+        assert window.random_frame.isVisibleTo(window)
+
+        window.source_combo.setCurrentText("Blank board")
+        qapp.processEvents()
+
+        assert window.board_group.isVisibleTo(window)
+        assert not window.random_frame.isVisibleTo(window)
+
+        window.source_combo.setCurrentText("Stable text")
+        qapp.processEvents()
+
+        assert not window.board_group.isVisibleTo(window)
+    finally:
+        window.close()
+
+
+def test_gui_text_boards_use_recommended_dimensions(qapp: QApplication) -> None:
+    """Stable text board size should come from the generated construction."""
+
+    _ = qapp
+    window = GameOfLifeWindow()
+    try:
+        window.source_combo.setCurrentText("Stable text")
+        window.text_input.setPlainText("HI")
+        window.apply_simulation_settings()
+        insight = inspect_text_construction("HI")
+
+        assert window.current_board is not None
+        assert not window.fit_text_button.isVisible()
+        assert window.width_spin.value() == insight.recommended_width
+        assert window.height_spin.value() == insight.recommended_height
+    finally:
+        window.close()
+
+
+def test_gui_playback_controls_live_under_preview_grid(qapp: QApplication) -> None:
+    """Simulation buttons should be grouped with the board preview, not the form."""
+
+    _ = qapp
+    window = GameOfLifeWindow()
+    try:
+        assert window.play_button.parentWidget() is window.simulation_controls_bar
+        assert window.step_button.parentWidget() is window.simulation_controls_bar
+        assert window.draw_button.parentWidget() is window.simulation_controls_bar
     finally:
         window.close()
 
@@ -217,7 +361,10 @@ def test_gui_can_export_generated_plan_as_xy_pairs(
         plan = render_text_block_construction("I")
         expected_cells = center_construction(window.current_board.config, plan)
         expected_lines = [
-            f"# board_size={window.current_board.config.width},{window.current_board.config.height}",
+            (
+                "# board_size="
+                f"{window.current_board.config.width},{window.current_board.config.height}"
+            ),
             *(f"{x},{y}" for x, y in expected_cells),
         ]
 
