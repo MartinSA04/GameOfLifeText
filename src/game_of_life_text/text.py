@@ -653,8 +653,8 @@ def _pair_conflicts_timeline(
     for t in range(horizon):
         a_cells = a_cells_per_gen[t] if t < a_len else a_settled
         b_shadow = b_shadow_per_gen[t] if t < b_len else b_settled_shadow
-        for p in b_shadow:
-            if (p + shift) in a_cells:
+        for p in a_cells:
+            if (p - shift) in b_shadow:
                 return True
     return any(p + shift in a_settled for p in b_settled_shadow)
 

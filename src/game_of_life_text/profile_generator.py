@@ -20,6 +20,7 @@ KERNPROF_TARGETS = (
     "game_of_life_text.construction.evolve_construction",
     "game_of_life_text.construction.block_synthesis_variant.__wrapped__",
     "game_of_life_text.simulator._step_array_n",
+    "game_of_life_text.text._pair_conflicts_timeline",
 )
 
 
