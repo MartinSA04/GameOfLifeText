@@ -7,7 +7,7 @@ stable text from deterministic glider syntheses.
 
 ## Highlights
 
-- Text-first workflow for stable block-text generation.
+- Text-first workflow for stable block-text generation, including uppercase and lowercase letters.
 - Determinate generation progress while the glider construction is built.
 - Settle progress while the board evolves into the final text.
 - Auto-sized text boards, with manual board size only shown for random and blank boards.
@@ -33,7 +33,7 @@ If Python 3.14.4 is already installed, `uv sync` is enough.
 ## Workflow
 
 1. Open the app in stable-text mode.
-2. Type supported ASCII text.
+2. Type supported ASCII text, including uppercase and lowercase letters.
 3. Select `Generate`.
 4. Watch the generation progress, then run or step the board until the settle bar completes.
 5. Use `Text` and `Board` preview toggles to switch between the finished text and the full seed.
@@ -63,4 +63,3 @@ uv run ruff format --check .
 uv run ty check
 uv run pytest
 ```
-

@@ -399,14 +399,253 @@ FONT_5X7: Final[dict[str, Glyph]] = {
         "#....",
         "#####",
     ),
+    "a": (
+        ".....",
+        ".....",
+        ".###.",
+        "....#",
+        ".####",
+        "#...#",
+        ".####",
+    ),
+    "b": (
+        "#....",
+        "#....",
+        "#.##.",
+        "##..#",
+        "#...#",
+        "##..#",
+        "#.##.",
+    ),
+    "c": (
+        ".....",
+        ".....",
+        ".###.",
+        "#...#",
+        "#....",
+        "#...#",
+        ".###.",
+    ),
+    "d": (
+        "....#",
+        "....#",
+        ".##.#",
+        "#..##",
+        "#...#",
+        "#..##",
+        ".##.#",
+    ),
+    "e": (
+        ".....",
+        ".....",
+        ".###.",
+        "#...#",
+        "#####",
+        "#....",
+        ".###.",
+    ),
+    "f": (
+        "..##.",
+        ".#...",
+        ".#...",
+        "###..",
+        ".#...",
+        ".#...",
+        ".#...",
+    ),
+    "g": (
+        ".....",
+        ".....",
+        ".####",
+        "#...#",
+        "#...#",
+        ".####",
+        "....#",
+        "....#",
+        "####.",
+    ),
+    "h": (
+        "#....",
+        "#....",
+        "#.##.",
+        "##..#",
+        "#...#",
+        "#...#",
+        "#...#",
+    ),
+    "i": (
+        "..#..",
+        ".....",
+        ".##..",
+        "..#..",
+        "..#..",
+        "..#..",
+        ".###.",
+    ),
+    "j": (
+        "...#.",
+        ".....",
+        "..##.",
+        "...#.",
+        "...#.",
+        "#..#.",
+        ".##..",
+    ),
+    "k": (
+        "#....",
+        "#....",
+        "#..#.",
+        "#.#..",
+        "##...",
+        "#.#..",
+        "#..#.",
+    ),
+    "l": (
+        ".##..",
+        "..#..",
+        "..#..",
+        "..#..",
+        "..#..",
+        "..#..",
+        ".###.",
+    ),
+    "m": (
+        ".....",
+        ".....",
+        "##.#.",
+        "#.#.#",
+        "#.#.#",
+        "#...#",
+        "#...#",
+    ),
+    "n": (
+        ".....",
+        ".....",
+        "#.##.",
+        "##..#",
+        "#...#",
+        "#...#",
+        "#...#",
+    ),
+    "o": (
+        ".....",
+        ".....",
+        ".###.",
+        "#...#",
+        "#...#",
+        "#...#",
+        ".###.",
+    ),
+    "p": (
+        ".....",
+        ".....",
+        "####.",
+        "#...#",
+        "#...#",
+        "#...#",
+        "####.",
+        "#....",
+        "#....",
+    ),
+    "q": (
+        ".....",
+        ".....",
+        ".####",
+        "#...#",
+        "#...#",
+        "#...#",
+        ".####",
+        "....#",
+        "....#",
+    ),
+    "r": (
+        ".....",
+        ".....",
+        "#.##.",
+        "##..#",
+        "#....",
+        "#....",
+        "#....",
+    ),
+    "s": (
+        ".....",
+        ".....",
+        ".####",
+        "#....",
+        ".###.",
+        "....#",
+        "####.",
+    ),
+    "t": (
+        ".#...",
+        ".#...",
+        "###..",
+        ".#...",
+        ".#...",
+        ".#...",
+        "..##.",
+    ),
+    "u": (
+        ".....",
+        ".....",
+        "#...#",
+        "#...#",
+        "#...#",
+        "#..##",
+        ".##.#",
+    ),
+    "v": (
+        ".....",
+        ".....",
+        "#...#",
+        "#...#",
+        "#...#",
+        ".#.#.",
+        "..#..",
+    ),
+    "w": (
+        ".....",
+        ".....",
+        "#...#",
+        "#...#",
+        "#.#.#",
+        "#.#.#",
+        ".#.#.",
+    ),
+    "x": (
+        ".....",
+        ".....",
+        "#...#",
+        ".#.#.",
+        "..#..",
+        ".#.#.",
+        "#...#",
+    ),
+    "y": (
+        ".....",
+        ".....",
+        "#...#",
+        "#...#",
+        ".####",
+        "....#",
+        ".###.",
+    ),
+    "z": (
+        ".....",
+        ".....",
+        "#####",
+        "...#.",
+        "..#..",
+        ".#...",
+        "#####",
+    ),
 }
 
 
 def render_text_block_pattern(text: str) -> Pattern:
     """Render text into a stable still-life pattern made from 2x2 blocks."""
 
-    normalized_text = _normalize_text(text)
-    origins = _text_pixel_origins(normalized_text)
+    origins = _text_pixel_origins(text)
     if not origins:
         return Pattern.empty()
 
@@ -446,8 +685,7 @@ def _render_text_block_construction(
 ) -> ConstructionPlan:
     """Return a text construction with optional block-packing progress reporting."""
 
-    normalized_text = _normalize_text(text)
-    target_cells = render_text_block_pattern(normalized_text)
+    target_cells = render_text_block_pattern(text)
     block_origins = _extract_block_origins(target_cells)
     if not block_origins:
         msg = "block text construction requires at least one block"
@@ -490,11 +728,10 @@ def _render_text_block_construction(
 def glyph_for_character(character: str) -> Glyph:
     """Return the 5x7 glyph for one supported character."""
 
-    normalized = character.upper()
-    if normalized not in FONT_5X7:
+    if character not in FONT_5X7:
         msg = f"unsupported character {character!r}"
         raise ValueError(msg)
-    return FONT_5X7[normalized]
+    return FONT_5X7[character]
 
 
 def _pack_block_plans(
@@ -788,26 +1025,17 @@ def _moore_expand_pattern(pattern: Pattern) -> Pattern:
     return Pattern(expanded.reshape(-1, 2))
 
 
-def _normalize_text(text: str) -> str:
-    """Normalize text input and reject empty payloads."""
-
-    normalized_text = text.upper()
-    if not normalized_text:
-        msg = "text cannot be empty"
-        raise ValueError(msg)
-    return normalized_text
-
-
 def _text_pixel_origins(text: str) -> tuple[Point, ...]:
     """Return the top-left origin of each live glyph pixel in the text layout."""
 
-    glyph_height = len(next(iter(FONT_5X7.values())))
     origins: list[Point] = []
     line_y = 0
     for line in text.splitlines():
         cursor_x = 0
+        glyph_height = 0
         for character in line:
             glyph = glyph_for_character(character)
+            glyph_height = max(glyph_height, len(glyph))
             for glyph_y, row in enumerate(glyph):
                 for glyph_x, token in enumerate(row):
                     if token != "#":

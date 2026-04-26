@@ -49,6 +49,13 @@ def test_multi_character_block_construction_settles_correctly() -> None:
     assert evolve_construction(plan) == plan.target_cells
 
 
+def test_lowercase_letters_render_as_distinct_small_glyphs() -> None:
+    """Lowercase input should preserve case instead of rendering as uppercase."""
+
+    assert render_text_block_pattern("a") != render_text_block_pattern("A")
+    assert render_text_block_pattern("az") != render_text_block_pattern("AZ")
+
+
 def test_text_construction_reports_block_build_progress() -> None:
     """Progress callbacks should report determinate construction progress."""
 
