@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import sys
+from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
 from PySide6.QtCore import QPoint, QRect, QSize, Qt, QTimer, Signal
@@ -12,6 +13,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
+    QFileDialog,
     QFormLayout,
     QFrame,
     QGroupBox,
@@ -436,6 +438,8 @@ class GameOfLifeWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.current_board: Board | None = None
+        self.current_export_pattern: Pattern | None = None
+        self.current_export_name: str | None = None
         self._current_step_limit: int | None = None
         self._steps_taken = 0
         self._timer = QTimer(self)
@@ -455,7 +459,7 @@ class GameOfLifeWindow(QMainWindow):
 
         try:
             settings = self.build_simulation_settings()
-            board = build_initial_board(settings)
+            board, export_pattern = build_initial_board(settings)
             focus_pattern, show_focus = self._simulation_focus_pattern(settings, board)
         except ValueError as exc:
             self._show_error(str(exc))
@@ -463,6 +467,10 @@ class GameOfLifeWindow(QMainWindow):
 
         self._stop_animation()
         self.current_board = board
+        self.current_export_pattern = export_pattern
+        self.current_export_name = (
+            _suggest_export_name(settings.text) if settings.text is not None else None
+        )
         self._current_step_limit = settings.steps
         self._steps_taken = 0
         self.board_canvas.set_board(
@@ -470,6 +478,7 @@ class GameOfLifeWindow(QMainWindow):
             message=self._board_message("Simulation ready"),
         )
         self._set_canvas_focus(focus_pattern, show=show_focus)
+        self._sync_export_button()
         self._set_status("Simulation board rebuilt.")
 
     def advance_generation(self) -> None:
@@ -663,10 +672,13 @@ class GameOfLifeWindow(QMainWindow):
         self.play_button.toggled.connect(self._toggle_animation)
         self.step_button = QPushButton("Step")
         self.step_button.clicked.connect(self.advance_generation)
+        self.export_button = QPushButton("Export Plan")
+        self.export_button.clicked.connect(self.export_plan)
         actions_layout.addWidget(self.rebuild_button)
         actions_layout.addWidget(self.draw_button)
         actions_layout.addWidget(self.play_button)
         actions_layout.addWidget(self.step_button)
+        actions_layout.addWidget(self.export_button)
         layout.addWidget(actions_group)
         layout.addStretch(1)
         return widget
@@ -756,6 +768,44 @@ class GameOfLifeWindow(QMainWindow):
             self.width_spin.setValue(max(self.width_spin.value(), 220))
             self.height_spin.setValue(max(self.height_spin.value(), 140))
             self.wrap_checkbox.setChecked(False)
+        self._sync_export_button()
+
+    def _sync_export_button(self) -> None:
+        source = self.source_combo.currentText()
+        has_export_pattern = self.current_export_pattern is not None and bool(self.current_export_pattern)
+        self.export_button.setEnabled(source == "Stable text" and has_export_pattern)
+
+    def export_plan(self) -> None:
+        """Export the latest stable-text seed plus its board size."""
+
+        if (
+            self.current_board is None
+            or self.current_export_pattern is None
+            or not self.current_export_pattern
+        ):
+            self._show_error("Build a stable-text board before exporting a plan.")
+            return
+
+        suggested_name = self.current_export_name or "stable_text_plan.txt"
+        path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Export Generated Plan",
+            suggested_name,
+            "Text Files (*.txt);;All Files (*)",
+        )
+        if not path:
+            return
+
+        lines = [
+            f"# board_size={self.current_board.config.width},{self.current_board.config.height}",
+            *(f"{x},{y}" for x, y in self.current_export_pattern),
+        ]
+        try:
+            Path(path).write_text("\n".join(lines) + "\n", encoding="utf-8")
+        except OSError as exc:
+            self._show_error(f"could not export plan: {exc}")
+            return
+        self._set_status(f"Exported plan to {path}.")
 
     def _board_message(self, prefix: str) -> str:
         if self.current_board is None:
@@ -790,10 +840,11 @@ def parse_optional_int(text: str, *, minimum: int | None = None) -> int | None:
     return value
 
 
-def build_initial_board(settings: SimulationSettings) -> Board:
+def build_initial_board(settings: SimulationSettings) -> tuple[Board, Pattern | None]:
     """Construct the initial board from validated settings."""
 
     config = SimulationConfig(width=settings.width, height=settings.height, wrap=settings.wrap)
+    export_pattern: Pattern | None = None
     if settings.text is not None:
         plan = render_text_block_construction(settings.text)
         width, height = minimum_centered_board_size(plan, padding=4)
@@ -803,9 +854,22 @@ def build_initial_board(settings: SimulationSettings) -> Board:
             wrap=settings.wrap,
         )
         live_cells = center_construction(config, plan)
+        export_pattern = live_cells
     else:
         live_cells = random_cells(config, settings.density, seed=settings.seed)
-    return Board.from_points(config, live_cells)
+    return (Board.from_points(config, live_cells), export_pattern)
+
+
+def _suggest_export_name(text: str | None) -> str:
+    """Return a readable default filename for a stable-text export."""
+
+    if text is None:
+        return "stable_text_plan.txt"
+    cleaned = "".join(character.lower() if character.isalnum() else "_" for character in text.strip())
+    normalized = "_".join(part for part in cleaned.split("_") if part)
+    if not normalized:
+        normalized = "stable_text"
+    return f"{normalized}_plan.txt"
 
 
 def create_application() -> QApplication:

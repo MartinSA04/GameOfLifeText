@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 
 import pytest
 
@@ -12,6 +13,8 @@ from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QApplication
 
+from game_of_life_text import gui as gui_module
+from game_of_life_text.construction import center_construction
 from game_of_life_text.gui import GameOfLifeWindow, parse_optional_int
 from game_of_life_text.simulator import centered_cells
 from game_of_life_text.text import render_text_block_construction
@@ -180,6 +183,45 @@ def test_gui_text_focus_view_fills_preview_by_default(qapp: QApplication) -> Non
         full_span = second.x() - first.x()
 
         assert focus_span > full_span
+    finally:
+        window.close()
+
+
+def test_gui_can_export_generated_plan_as_xy_pairs(
+    qapp: QApplication,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The export button should write board size plus centered ``x,y`` seed lines."""
+
+    _ = qapp
+    export_path = tmp_path / "stable_text_plan.txt"
+    window = GameOfLifeWindow()
+    try:
+        window.show()
+        window.source_combo.setCurrentText("Stable text")
+        window.text_input.setPlainText("I")
+        window.width_spin.setValue(220)
+        window.height_spin.setValue(140)
+        window.apply_simulation_settings()
+        qapp.processEvents()
+
+        monkeypatch.setattr(
+            gui_module.QFileDialog,
+            "getSaveFileName",
+            lambda *args, **kwargs: (str(export_path), "Text Files (*.txt)"),
+        )
+
+        QTest.mouseClick(window.export_button, Qt.MouseButton.LeftButton)
+
+        plan = render_text_block_construction("I")
+        expected_cells = center_construction(window.current_board.config, plan)
+        expected_lines = [
+            f"# board_size={window.current_board.config.width},{window.current_board.config.height}",
+            *(f"{x},{y}" for x, y in expected_cells),
+        ]
+
+        assert export_path.read_text(encoding="utf-8").splitlines() == expected_lines
     finally:
         window.close()
 
