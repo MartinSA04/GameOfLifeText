@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import dataclass
 from functools import cache
 from typing import Final
 
@@ -482,35 +483,70 @@ def _pack_block_plans(
     verification small.
     """
 
-    placed: list[tuple[ConstructionPlan, Pattern]] = []
+    placed: list[_PlacedBlock] = []
     for origin in ordered_origins:
         orientations = _block_orientations(origin, center=center)
         accepted = False
         for extra_periods in range(_MAX_PACK_SLOT + 1):
             for orientation in orientations:
-                candidate = plan_block(origin, orientation=orientation, extra_periods=extra_periods)
-                candidate_footprint = _block_construction_footprint(
-                    orientation,
-                    extra_periods,
-                    origin,
-                )
+                base_data = _base_block_data(orientation, extra_periods)
+                candidate_footprint = base_data.footprint.translated(origin[0], origin[1])
 
                 touching = [
-                    placed_plan
-                    for placed_plan, placed_fp in placed
-                    if not placed_fp.isdisjoint(candidate_footprint)
+                    placed_block
+                    for placed_block in placed
+                    if not placed_block.footprint.isdisjoint(candidate_footprint)
                 ]
                 if not touching:
-                    placed.append((candidate, candidate_footprint))
+                    candidate = plan_block(
+                        origin, orientation=orientation, extra_periods=extra_periods
+                    )
+                    placed.append(
+                        _PlacedBlock(
+                            plan=candidate,
+                            footprint=candidate_footprint,
+                            origin=origin,
+                            orientation=orientation,
+                            extra_periods=extra_periods,
+                        )
+                    )
                     accepted = True
                     break
 
-                tentative = combine_plans([*touching, candidate])
-                expected_patterns = [plan.target_cells for plan in touching]
+                # Cheap precise pairwise filter: if any single touching block
+                # collides with the candidate at the same generation, the slot
+                # is unreachable. The check is cached on relative geometry, so
+                # the regular text grid produces heavy cache hits.
+                if any(
+                    _pair_conflicts_cached(
+                        tb.orientation,
+                        tb.extra_periods,
+                        orientation,
+                        extra_periods,
+                        origin[0] - tb.origin[0],
+                        origin[1] - tb.origin[1],
+                    )
+                    for tb in touching
+                ):
+                    continue
+
+                candidate = plan_block(
+                    origin, orientation=orientation, extra_periods=extra_periods
+                )
+                tentative = combine_plans([tb.plan for tb in touching] + [candidate])
+                expected_patterns = [tb.plan.target_cells for tb in touching]
                 expected_patterns.append(candidate.target_cells)
                 expected = Pattern.merge(*expected_patterns)
                 if evolve_construction(tentative) == expected:
-                    placed.append((candidate, candidate_footprint))
+                    placed.append(
+                        _PlacedBlock(
+                            plan=candidate,
+                            footprint=candidate_footprint,
+                            origin=origin,
+                            orientation=orientation,
+                            extra_periods=extra_periods,
+                        )
+                    )
                     accepted = True
                     break
             if accepted:
@@ -518,48 +554,204 @@ def _pack_block_plans(
         if not accepted:
             msg = f"could not pack block at {origin!r} within {_MAX_PACK_SLOT} slots"
             raise ValueError(msg)
-    return [plan for plan, _ in placed]
+    return [block.plan for block in placed]
+
+
+@dataclass(frozen=True, slots=True)
+class _PlacedBlock:
+    """One placed block tagged with the metadata pair-checks need."""
+
+    plan: ConstructionPlan
+    footprint: Pattern
+    origin: Point
+    orientation: str
+    extra_periods: int
 
 
 @cache
-def _base_construction_footprint(orientation: str, extra_periods: int) -> Pattern:
-    """Return the Moore-expanded swept cells for one block construction at origin (0, 0)."""
+def _pair_conflicts_cached(
+    orientation_a: str,
+    extra_periods_a: int,
+    orientation_b: str,
+    extra_periods_b: int,
+    dx: int,
+    dy: int,
+) -> bool:
+    """Pairwise conflict result for one relative geometry, cached forever.
+
+    Two block constructions either interact at some generation or they do not;
+    the answer is a deterministic function of the launch directions, the relative
+    offset, and the two extra_periods values. Text glyphs reuse the same
+    relative geometry over and over, so this cache becomes the hot path.
+    """
+
+    a_data = _base_block_data(orientation_a, extra_periods_a)
+    b_data = _base_block_data(orientation_b, extra_periods_b)
+    return _pair_conflicts_timeline(a_data, (0, 0), b_data, (dx, dy))
+
+
+@dataclass(frozen=True, slots=True)
+class _BaseBlockData:
+    """Per-(orientation, extra_periods) precomputed data for one block at origin (0, 0).
+
+    ``cells_per_gen`` and ``shadow_per_gen`` store cells as bit-packed integers
+    rather than ``(x, y)`` tuples so the pairwise-conflict check can shift a
+    timeline by one ``int`` offset and use native ``frozenset`` operations.
+    """
+
+    footprint: Pattern
+    cells_per_gen: tuple[frozenset[int], ...]
+    shadow_per_gen: tuple[frozenset[int], ...]
+    settled: frozenset[int]
+    settled_shadow: frozenset[int]
+
+
+# Bit-packing constants for cell coordinates. With offset 2^14 each axis we can
+# represent any point inside ±16K, far beyond the largest text we render.
+_COORD_OFFSET: Final[int] = 1 << 14
+_COORD_SCALE: Final[int] = 1 << 16
+
+
+def _pack_point(x: int, y: int) -> int:
+    return ((x + _COORD_OFFSET) * _COORD_SCALE) + (y + _COORD_OFFSET)
+
+
+def _shift_constant(dx: int, dy: int) -> int:
+    return dx * _COORD_SCALE + dy
+
+
+def _pair_conflicts_timeline(
+    a: _BaseBlockData,
+    a_origin: Point,
+    b: _BaseBlockData,
+    b_origin: Point,
+) -> bool:
+    """Return True if A and B have live cells within Moore distance 1 at any same gen.
+
+    Pair conflicts are precisely captured here: two cells that are one apart
+    affect each other's next state directly. Cells two apart cannot pairwise
+    interact (they only meet at a shared neighbor cell that, in the pair,
+    gets a single contribution from each side and stays dead). Multi-block
+    collusion on a shared neighbor still requires a full simulation.
+    """
+
+    shift = _shift_constant(b_origin[0] - a_origin[0], b_origin[1] - a_origin[1])
+    horizon = max(len(a.cells_per_gen), len(b.cells_per_gen))
+    a_settled = a.settled
+    b_settled_shadow = b.settled_shadow
+    a_cells_per_gen = a.cells_per_gen
+    b_shadow_per_gen = b.shadow_per_gen
+    a_len = len(a_cells_per_gen)
+    b_len = len(b_shadow_per_gen)
+    if shift == 0:
+        for t in range(horizon):
+            a_cells = a_cells_per_gen[t] if t < a_len else a_settled
+            b_shadow = b_shadow_per_gen[t] if t < b_len else b_settled_shadow
+            if not a_cells.isdisjoint(b_shadow):
+                return True
+        return not a_settled.isdisjoint(b_settled_shadow)
+    for t in range(horizon):
+        a_cells = a_cells_per_gen[t] if t < a_len else a_settled
+        b_shadow = b_shadow_per_gen[t] if t < b_len else b_settled_shadow
+        for p in b_shadow:
+            if (p + shift) in a_cells:
+                return True
+    return any(p + shift in a_settled for p in b_settled_shadow)
+
+
+@cache
+def _base_block_data(orientation: str, extra_periods: int) -> _BaseBlockData:
+    """Compute footprint and per-generation cell sets for one block at origin (0, 0).
+
+    The simulation is shared between the spatial footprint (used as the fast
+    pattern-disjoint pre-filter to find touching neighbors) and the per-gen
+    bit-packed cell sets (used by the precise pairwise-conflict filter that
+    rejects bad extra_periods values without ever running a combined-plan
+    simulation).
+    """
 
     plan = plan_block((0, 0), orientation=orientation, extra_periods=extra_periods)
-    if plan.initial_cells:
-        min_x, min_y, max_x, max_y = plan.initial_cells.bounds()
-        padding = plan.generations + 4
-        height = max_y - min_y + 1 + padding * 2
-        width = max_x - min_x + 1 + padding * 2
-        grid = np.zeros((height, width), dtype=np.bool_)
-        points = plan.initial_cells.points
-        grid[points[:, 1] - min_y + padding, points[:, 0] - min_x + padding] = True
-        swept_arr = grid.copy()
-        for _ in range(plan.generations):
-            grid = _step_array(grid, wrap=False)
-            swept_arr |= grid
-        swept = Pattern.from_grid(swept_arr).translated(min_x - padding, min_y - padding)
-    else:
-        swept = Pattern.empty()
-    swept = Pattern.merge(swept, plan.target_cells)
-    if not swept:
-        return Pattern.empty()
+    settled = _pack_pattern(plan.target_cells)
+    settled_shadow = _expand_packed_with_adjacency(settled)
 
+    if not plan.initial_cells:
+        return _BaseBlockData(
+            footprint=Pattern.empty(),
+            cells_per_gen=(),
+            shadow_per_gen=(),
+            settled=settled,
+            settled_shadow=settled_shadow,
+        )
+
+    min_x, min_y, max_x, max_y = plan.initial_cells.bounds()
+    if plan.target_cells:
+        target_min_x, target_min_y, target_max_x, target_max_y = plan.target_cells.bounds()
+        min_x = min(min_x, target_min_x)
+        min_y = min(min_y, target_min_y)
+        max_x = max(max_x, target_max_x)
+        max_y = max(max_y, target_max_y)
+    padding = 4
+    height = max_y - min_y + 1 + padding * 2
+    width = max_x - min_x + 1 + padding * 2
+    grid = np.zeros((height, width), dtype=np.bool_)
+    points = plan.initial_cells.points
+    grid[points[:, 1] - min_y + padding, points[:, 0] - min_x + padding] = True
+
+    swept_arr = grid.copy()
+    cells_per_gen: list[frozenset[int]] = []
+    shadow_per_gen: list[frozenset[int]] = []
+    for _ in range(plan.generations + 1):
+        ys, xs = np.nonzero(grid)
+        packed = frozenset(
+            _pack_point(int(x) + min_x - padding, int(y) + min_y - padding)
+            for x, y in zip(xs, ys, strict=True)
+        )
+        cells_per_gen.append(packed)
+        shadow_per_gen.append(_expand_packed_with_adjacency(packed))
+        swept_arr |= grid
+        grid = _step_array(grid, wrap=False)
+
+    swept_pattern = Pattern.from_grid(swept_arr).translated(min_x - padding, min_y - padding)
+    swept_with_target = Pattern.merge(swept_pattern, plan.target_cells)
+    footprint = _moore_expand_pattern(swept_with_target)
+    return _BaseBlockData(
+        footprint=footprint,
+        cells_per_gen=tuple(cells_per_gen),
+        shadow_per_gen=tuple(shadow_per_gen),
+        settled=settled,
+        settled_shadow=settled_shadow,
+    )
+
+
+def _pack_pattern(pattern: Pattern) -> frozenset[int]:
+    if not pattern:
+        return frozenset()
+    return frozenset(_pack_point(int(p[0]), int(p[1])) for p in pattern.points)
+
+
+_NEIGHBOR_SHIFTS: Final[tuple[int, ...]] = tuple(
+    _shift_constant(dx, dy) for dx in (-1, 0, 1) for dy in (-1, 0, 1)
+)
+
+
+def _expand_packed_with_adjacency(cells: frozenset[int]) -> frozenset[int]:
+    if not cells:
+        return cells
+    expanded: set[int] = set()
+    for shift in _NEIGHBOR_SHIFTS:
+        expanded.update(p + shift for p in cells)
+    return frozenset(expanded)
+
+
+def _moore_expand_pattern(pattern: Pattern) -> Pattern:
+    if not pattern:
+        return Pattern.empty()
     offsets = np.asarray(
         [(dx, dy) for dx in (-1, 0, 1) for dy in (-1, 0, 1)],
         dtype=np.int32,
     )
-    expanded = swept.points[:, None, :] + offsets[None, :, :]
+    expanded = pattern.points[:, None, :] + offsets[None, :, :]
     return Pattern(expanded.reshape(-1, 2))
-
-
-def _block_construction_footprint(
-    orientation: str, extra_periods: int, origin: Point
-) -> Pattern:
-    """Translate the cached base footprint to ``origin``."""
-
-    base = _base_construction_footprint(orientation, extra_periods)
-    return base.translated(origin[0], origin[1])
 
 
 def _normalize_text(text: str) -> str:

@@ -6,7 +6,7 @@ import argparse
 from pathlib import Path
 
 from .construction import block_synthesis_variant
-from .text import _base_construction_footprint, render_text_block_construction
+from .text import _base_block_data, render_text_block_construction
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -68,7 +68,7 @@ def _clear_generator_caches() -> None:
     """Clear memoized generator helpers for cold-path profiling."""
 
     render_text_block_construction.cache_clear()
-    _base_construction_footprint.cache_clear()
+    _base_block_data.cache_clear()
     block_synthesis_variant.cache_clear()
 
 

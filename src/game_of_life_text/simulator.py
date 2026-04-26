@@ -35,9 +35,14 @@ class Pattern:
     """A canonical NumPy-backed collection of unique ``(x, y)`` points."""
 
     _points: PointArray
+    _bbox: tuple[int, int, int, int] | None = None
+    _point_set: frozenset[Point] | None = None
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "_points", _normalize_points(self._points))
+        normalized = _normalize_points(self._points)
+        object.__setattr__(self, "_points", normalized)
+        object.__setattr__(self, "_bbox", _bbox_of(normalized))
+        object.__setattr__(self, "_point_set", None)
 
     @classmethod
     def empty(cls) -> Pattern:
@@ -53,12 +58,13 @@ class Pattern:
 
     @classmethod
     def from_grid(cls, grid: BoolGrid) -> Pattern:
-        """Build a pattern from a boolean grid."""
+        """Build a pattern from a boolean grid (cells are inherently unique)."""
 
         ys, xs = np.nonzero(grid)
         if xs.size == 0:
             return cls.empty()
-        return cls(np.column_stack((xs, ys)).astype(np.int32, copy=False))
+        points = np.column_stack((xs, ys)).astype(np.int32, copy=False)
+        return _from_unique_sorted_points(_lex_sort_points(points))
 
     @classmethod
     def merge(cls, *patterns: Pattern) -> Pattern:
@@ -101,23 +107,21 @@ class Pattern:
     def bounds(self) -> tuple[int, int, int, int]:
         """Return ``(min_x, min_y, max_x, max_y)`` for the pattern."""
 
-        if not self:
+        if self._bbox is None:
             msg = "pattern is empty"
             raise ValueError(msg)
-        mins = self._points.min(axis=0)
-        maxs = self._points.max(axis=0)
-        return (int(mins[0]), int(mins[1]), int(maxs[0]), int(maxs[1]))
+        return self._bbox
 
     def translated(self, offset_x: int, offset_y: int) -> Pattern:
-        """Return a translated copy of the pattern."""
+        """Return a translated copy of the pattern (shift preserves uniqueness)."""
 
         if not self:
             return Pattern.empty()
         offset = np.array((offset_x, offset_y), dtype=np.int32)
-        return Pattern(self._points + offset)
+        return _from_unique_sorted_points(self._points + offset)
 
     def clipped_to(self, config: SimulationConfig) -> Pattern:
-        """Return only the points inside ``config``."""
+        """Return only the points inside ``config`` (subset preserves uniqueness)."""
 
         if not self:
             return self
@@ -129,17 +133,46 @@ class Pattern:
         )
         if bool(np.all(mask)):
             return self
-        return Pattern(self._points[mask])
+        return _from_unique_sorted_points(self._points[mask])
 
     def isdisjoint(self, other: Pattern) -> bool:
-        """Return whether two patterns share no points."""
+        """Return whether two patterns share no points.
 
-        if not self or not other:
+        Spatially disjoint patterns are extremely common in the planner, so
+        we short-circuit on bounding boxes first. When bboxes do overlap we
+        compare a (lazily cached) Python frozenset of points, iterating the
+        smaller side, which beats ``np.intersect1d`` on the small-to-medium
+        patterns the planner actually produces.
+        """
+
+        if self._bbox is None or other._bbox is None:
             return True
-        self_view = _structured_points_view(self._points)
-        other_view = _structured_points_view(other._points)
-        overlap = np.intersect1d(self_view, other_view, assume_unique=True)
-        return overlap.size == 0
+        a_min_x, a_min_y, a_max_x, a_max_y = self._bbox
+        b_min_x, b_min_y, b_max_x, b_max_y = other._bbox
+        if a_max_x < b_min_x or b_max_x < a_min_x:
+            return True
+        if a_max_y < b_min_y or b_max_y < a_min_y:
+            return True
+        smaller, larger = (self, other) if len(self) <= len(other) else (other, self)
+        return smaller._as_set().isdisjoint(larger._as_set())
+
+    def _as_set(self) -> frozenset[Point]:
+        """Return a (cached) Python frozenset view of the points for fast lookup."""
+
+        if self._point_set is None:
+            object.__setattr__(
+                self,
+                "_point_set",
+                frozenset(
+                    zip(
+                        self._points[:, 0].tolist(),
+                        self._points[:, 1].tolist(),
+                        strict=True,
+                    )
+                ),
+            )
+        assert self._point_set is not None
+        return self._point_set
 
 
 @dataclass(frozen=True, slots=True, eq=False)
@@ -326,6 +359,40 @@ def _normalize_points(points: PointArray) -> PointArray:
     normalized = np.unique(array, axis=0)
     normalized.setflags(write=False)
     return normalized
+
+
+def _from_unique_sorted_points(points: PointArray) -> Pattern:
+    """Build a pattern from points that are already unique, skipping ``np.unique``.
+
+    Translation, grid masking, and grid extraction all yield unique cells, so
+    we can avoid the ``np.unique(axis=0)`` sort that dominates the planner's
+    Pattern construction cost.
+    """
+
+    pattern = Pattern.__new__(Pattern)
+    array = np.ascontiguousarray(points, dtype=np.int32)
+    array.setflags(write=False)
+    object.__setattr__(pattern, "_points", array)
+    object.__setattr__(pattern, "_bbox", _bbox_of(array))
+    object.__setattr__(pattern, "_point_set", None)
+    return pattern
+
+
+def _bbox_of(points: PointArray) -> tuple[int, int, int, int] | None:
+    if points.shape[0] == 0:
+        return None
+    mins = points.min(axis=0)
+    maxs = points.max(axis=0)
+    return (int(mins[0]), int(mins[1]), int(maxs[0]), int(maxs[1]))
+
+
+def _lex_sort_points(points: PointArray) -> PointArray:
+    """Lexicographically sort an (n, 2) point array by (x, y)."""
+
+    if points.shape[0] <= 1:
+        return points
+    order = np.lexsort((points[:, 1], points[:, 0]))
+    return points[order]
 
 
 def _points_from_iterable(points: Iterable[Point]) -> PointArray:

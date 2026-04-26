@@ -68,16 +68,26 @@ def test_pack_block_plans_tries_fallback_outward_direction(
         pattern = Pattern.from_points(((offset, 0),))
         return ConstructionPlan(initial_cells=pattern, target_cells=pattern, generations=0)
 
-    def fake_footprint(orientation: str, extra_periods: int, origin: Point) -> Pattern:
+    def fake_base_block_data(
+        orientation: str, extra_periods: int
+    ) -> text_module._BaseBlockData:
         _ = extra_periods
-        if origin == first_origin:
-            return Pattern.from_points(((0, 0),))
         if orientation == "east":
-            return Pattern.from_points(((0, 0),))
-        return Pattern.from_points(((200, 0),))
+            # Both origins translate this footprint to include the second origin,
+            # so their footprints overlap and force the planner into the sim path.
+            footprint = Pattern.from_points(((0, 0), (10, -1)))
+        else:
+            footprint = Pattern.from_points(((200, 0),))
+        return text_module._BaseBlockData(
+            footprint=footprint,
+            cells_per_gen=(),
+            shadow_per_gen=(),
+            settled=frozenset(),
+            settled_shadow=frozenset(),
+        )
 
     monkeypatch.setattr(text_module, "plan_block", fake_plan_block)
-    monkeypatch.setattr(text_module, "_block_construction_footprint", fake_footprint)
+    monkeypatch.setattr(text_module, "_base_block_data", fake_base_block_data)
     monkeypatch.setattr(text_module, "evolve_construction", lambda plan: Pattern.empty())
 
     plans = text_module._pack_block_plans((first_origin, second_origin), center=(0.0, 0.0))

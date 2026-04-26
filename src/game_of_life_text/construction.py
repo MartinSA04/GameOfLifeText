@@ -216,13 +216,30 @@ def minimum_centered_board_size(
 
 
 def evolve_construction(plan: ConstructionPlan) -> Pattern:
-    """Simulate a construction plan and return its final settled cells."""
+    """Simulate a construction plan and return its final settled cells.
+
+    Each glider in a block synthesis launches inside the initial-cells bounding
+    box and converges to a target cell that is also inside the same bounding
+    box of (initial ``union`` target). The trajectory therefore never escapes
+    that union. We use a tight bounding box plus a small safety margin instead
+    of the previous ``generations + 12`` padding, which kept the simulation
+    board growing quadratically with extra_periods.
+    """
 
     if not plan.initial_cells:
         return Pattern.empty()
 
-    min_x, min_y, max_x, max_y = plan.initial_cells.bounds()
-    padding = plan.generations + 12
+    init_min_x, init_min_y, init_max_x, init_max_y = plan.initial_cells.bounds()
+    if plan.target_cells:
+        target_min_x, target_min_y, target_max_x, target_max_y = plan.target_cells.bounds()
+        min_x = min(init_min_x, target_min_x)
+        min_y = min(init_min_y, target_min_y)
+        max_x = max(init_max_x, target_max_x)
+        max_y = max(init_max_y, target_max_y)
+    else:
+        min_x, min_y, max_x, max_y = init_min_x, init_min_y, init_max_x, init_max_y
+
+    padding = 8
     config = SimulationConfig(
         width=max_x - min_x + 1 + padding * 2,
         height=max_y - min_y + 1 + padding * 2,
