@@ -16,630 +16,27 @@ from .construction import (
     evolve_construction,
     plan_block,
 )
+from .font import FONT_5X7, Glyph
 from .simulator import (
     Pattern,
     Point,
     _step_array,  # type: ignore[reportPrivateUsage]
 )
 
-Glyph = tuple[str, ...]
+__all__ = [
+    "FONT_5X7",
+    "Glyph",
+    "glyph_for_character",
+    "render_text_block_construction",
+    "render_text_block_construction_with_progress",
+    "render_text_block_pattern",
+]
+
 ProgressCallback = Callable[[int, int], None]
 BLOCK_TEXT_STRIDE: Final[int] = 6
 BLOCK_TEXT_LETTER_SPACING: Final[int] = BLOCK_TEXT_STRIDE
 BLOCK_TEXT_LINE_SPACING: Final[int] = BLOCK_TEXT_STRIDE * 2
 _MAX_PACK_SLOT: Final[int] = 256
-
-FONT_5X7: Final[dict[str, Glyph]] = {
-    " ": (
-        ".....",
-        ".....",
-        ".....",
-        ".....",
-        ".....",
-        ".....",
-        ".....",
-    ),
-    "!": (
-        "..#..",
-        "..#..",
-        "..#..",
-        "..#..",
-        "..#..",
-        ".....",
-        "..#..",
-    ),
-    "-": (
-        ".....",
-        ".....",
-        ".....",
-        "#####",
-        ".....",
-        ".....",
-        ".....",
-    ),
-    ".": (
-        ".....",
-        ".....",
-        ".....",
-        ".....",
-        ".....",
-        "..#..",
-        "..#..",
-    ),
-    "?": (
-        ".###.",
-        "#...#",
-        "....#",
-        "...#.",
-        "..#..",
-        ".....",
-        "..#..",
-    ),
-    "0": (
-        ".###.",
-        "#...#",
-        "#..##",
-        "#.#.#",
-        "##..#",
-        "#...#",
-        ".###.",
-    ),
-    "1": (
-        "..#..",
-        ".##..",
-        "..#..",
-        "..#..",
-        "..#..",
-        "..#..",
-        ".###.",
-    ),
-    "2": (
-        ".###.",
-        "#...#",
-        "....#",
-        "...#.",
-        "..#..",
-        ".#...",
-        "#####",
-    ),
-    "3": (
-        "####.",
-        "....#",
-        "....#",
-        ".###.",
-        "....#",
-        "....#",
-        "####.",
-    ),
-    "4": (
-        "...#.",
-        "..##.",
-        ".#.#.",
-        "#..#.",
-        "#####",
-        "...#.",
-        "...#.",
-    ),
-    "5": (
-        "#####",
-        "#....",
-        "#....",
-        "####.",
-        "....#",
-        "....#",
-        "####.",
-    ),
-    "6": (
-        ".###.",
-        "#....",
-        "#....",
-        "####.",
-        "#...#",
-        "#...#",
-        ".###.",
-    ),
-    "7": (
-        "#####",
-        "....#",
-        "...#.",
-        "..#..",
-        ".#...",
-        ".#...",
-        ".#...",
-    ),
-    "8": (
-        ".###.",
-        "#...#",
-        "#...#",
-        ".###.",
-        "#...#",
-        "#...#",
-        ".###.",
-    ),
-    "9": (
-        ".###.",
-        "#...#",
-        "#...#",
-        ".####",
-        "....#",
-        "....#",
-        ".###.",
-    ),
-    "A": (
-        ".###.",
-        "#...#",
-        "#...#",
-        "#####",
-        "#...#",
-        "#...#",
-        "#...#",
-    ),
-    "B": (
-        "####.",
-        "#...#",
-        "#...#",
-        "####.",
-        "#...#",
-        "#...#",
-        "####.",
-    ),
-    "C": (
-        ".###.",
-        "#...#",
-        "#....",
-        "#....",
-        "#....",
-        "#...#",
-        ".###.",
-    ),
-    "D": (
-        "####.",
-        "#...#",
-        "#...#",
-        "#...#",
-        "#...#",
-        "#...#",
-        "####.",
-    ),
-    "E": (
-        "#####",
-        "#....",
-        "#....",
-        "####.",
-        "#....",
-        "#....",
-        "#####",
-    ),
-    "F": (
-        "#####",
-        "#....",
-        "#....",
-        "####.",
-        "#....",
-        "#....",
-        "#....",
-    ),
-    "G": (
-        ".###.",
-        "#...#",
-        "#....",
-        "#.###",
-        "#...#",
-        "#...#",
-        ".###.",
-    ),
-    "H": (
-        "#...#",
-        "#...#",
-        "#...#",
-        "#####",
-        "#...#",
-        "#...#",
-        "#...#",
-    ),
-    "I": (
-        "#####",
-        "..#..",
-        "..#..",
-        "..#..",
-        "..#..",
-        "..#..",
-        "#####",
-    ),
-    "J": (
-        "..###",
-        "...#.",
-        "...#.",
-        "...#.",
-        "...#.",
-        "#..#.",
-        ".##..",
-    ),
-    "K": (
-        "#...#",
-        "#..#.",
-        "#.#..",
-        "##...",
-        "#.#..",
-        "#..#.",
-        "#...#",
-    ),
-    "L": (
-        "#....",
-        "#....",
-        "#....",
-        "#....",
-        "#....",
-        "#....",
-        "#####",
-    ),
-    "M": (
-        "#...#",
-        "##.##",
-        "#.#.#",
-        "#.#.#",
-        "#...#",
-        "#...#",
-        "#...#",
-    ),
-    "N": (
-        "#...#",
-        "##..#",
-        "#.#.#",
-        "#..##",
-        "#...#",
-        "#...#",
-        "#...#",
-    ),
-    "O": (
-        ".###.",
-        "#...#",
-        "#...#",
-        "#...#",
-        "#...#",
-        "#...#",
-        ".###.",
-    ),
-    "P": (
-        "####.",
-        "#...#",
-        "#...#",
-        "####.",
-        "#....",
-        "#....",
-        "#....",
-    ),
-    "Q": (
-        ".###.",
-        "#...#",
-        "#...#",
-        "#...#",
-        "#.#.#",
-        "#..#.",
-        ".##.#",
-    ),
-    "R": (
-        "####.",
-        "#...#",
-        "#...#",
-        "####.",
-        "#.#..",
-        "#..#.",
-        "#...#",
-    ),
-    "S": (
-        ".####",
-        "#....",
-        "#....",
-        ".###.",
-        "....#",
-        "....#",
-        "####.",
-    ),
-    "T": (
-        "#####",
-        "..#..",
-        "..#..",
-        "..#..",
-        "..#..",
-        "..#..",
-        "..#..",
-    ),
-    "U": (
-        "#...#",
-        "#...#",
-        "#...#",
-        "#...#",
-        "#...#",
-        "#...#",
-        ".###.",
-    ),
-    "V": (
-        "#...#",
-        "#...#",
-        "#...#",
-        "#...#",
-        "#...#",
-        ".#.#.",
-        "..#..",
-    ),
-    "W": (
-        "#...#",
-        "#...#",
-        "#...#",
-        "#.#.#",
-        "#.#.#",
-        "##.##",
-        "#...#",
-    ),
-    "X": (
-        "#...#",
-        "#...#",
-        ".#.#.",
-        "..#..",
-        ".#.#.",
-        "#...#",
-        "#...#",
-    ),
-    "Y": (
-        "#...#",
-        "#...#",
-        ".#.#.",
-        "..#..",
-        "..#..",
-        "..#..",
-        "..#..",
-    ),
-    "Z": (
-        "#####",
-        "....#",
-        "...#.",
-        "..#..",
-        ".#...",
-        "#....",
-        "#####",
-    ),
-    "a": (
-        ".....",
-        ".....",
-        ".###.",
-        "....#",
-        ".####",
-        "#...#",
-        ".####",
-    ),
-    "b": (
-        "#....",
-        "#....",
-        "#.##.",
-        "##..#",
-        "#...#",
-        "##..#",
-        "#.##.",
-    ),
-    "c": (
-        ".....",
-        ".....",
-        ".###.",
-        "#...#",
-        "#....",
-        "#...#",
-        ".###.",
-    ),
-    "d": (
-        "....#",
-        "....#",
-        ".##.#",
-        "#..##",
-        "#...#",
-        "#..##",
-        ".##.#",
-    ),
-    "e": (
-        ".....",
-        ".....",
-        ".###.",
-        "#...#",
-        "#####",
-        "#....",
-        ".###.",
-    ),
-    "f": (
-        "..##.",
-        ".#...",
-        ".#...",
-        "###..",
-        ".#...",
-        ".#...",
-        ".#...",
-    ),
-    "g": (
-        ".....",
-        ".....",
-        ".####",
-        "#...#",
-        "#...#",
-        ".####",
-        "....#",
-        "....#",
-        "####.",
-    ),
-    "h": (
-        "#....",
-        "#....",
-        "#.##.",
-        "##..#",
-        "#...#",
-        "#...#",
-        "#...#",
-    ),
-    "i": (
-        "..#..",
-        ".....",
-        ".##..",
-        "..#..",
-        "..#..",
-        "..#..",
-        ".###.",
-    ),
-    "j": (
-        "...#.",
-        ".....",
-        "..##.",
-        "...#.",
-        "...#.",
-        "#..#.",
-        ".##..",
-    ),
-    "k": (
-        "#....",
-        "#....",
-        "#..#.",
-        "#.#..",
-        "##...",
-        "#.#..",
-        "#..#.",
-    ),
-    "l": (
-        ".##..",
-        "..#..",
-        "..#..",
-        "..#..",
-        "..#..",
-        "..#..",
-        ".###.",
-    ),
-    "m": (
-        ".....",
-        ".....",
-        "##.#.",
-        "#.#.#",
-        "#.#.#",
-        "#...#",
-        "#...#",
-    ),
-    "n": (
-        ".....",
-        ".....",
-        "#.##.",
-        "##..#",
-        "#...#",
-        "#...#",
-        "#...#",
-    ),
-    "o": (
-        ".....",
-        ".....",
-        ".###.",
-        "#...#",
-        "#...#",
-        "#...#",
-        ".###.",
-    ),
-    "p": (
-        ".....",
-        ".....",
-        "####.",
-        "#...#",
-        "#...#",
-        "#...#",
-        "####.",
-        "#....",
-        "#....",
-    ),
-    "q": (
-        ".....",
-        ".....",
-        ".####",
-        "#...#",
-        "#...#",
-        "#...#",
-        ".####",
-        "....#",
-        "....#",
-    ),
-    "r": (
-        ".....",
-        ".....",
-        "#.##.",
-        "##..#",
-        "#....",
-        "#....",
-        "#....",
-    ),
-    "s": (
-        ".....",
-        ".....",
-        ".####",
-        "#....",
-        ".###.",
-        "....#",
-        "####.",
-    ),
-    "t": (
-        ".#...",
-        ".#...",
-        "###..",
-        ".#...",
-        ".#...",
-        ".#...",
-        "..##.",
-    ),
-    "u": (
-        ".....",
-        ".....",
-        "#...#",
-        "#...#",
-        "#...#",
-        "#..##",
-        ".##.#",
-    ),
-    "v": (
-        ".....",
-        ".....",
-        "#...#",
-        "#...#",
-        "#...#",
-        ".#.#.",
-        "..#..",
-    ),
-    "w": (
-        ".....",
-        ".....",
-        "#...#",
-        "#...#",
-        "#.#.#",
-        "#.#.#",
-        ".#.#.",
-    ),
-    "x": (
-        ".....",
-        ".....",
-        "#...#",
-        ".#.#.",
-        "..#..",
-        ".#.#.",
-        "#...#",
-    ),
-    "y": (
-        ".....",
-        ".....",
-        "#...#",
-        "#...#",
-        ".####",
-        "....#",
-        ".###.",
-    ),
-    "z": (
-        ".....",
-        ".....",
-        "#####",
-        "...#.",
-        "..#..",
-        ".#...",
-        "#####",
-    ),
-}
 
 
 def render_text_block_pattern(text: str) -> Pattern:
@@ -741,136 +138,226 @@ def _pack_block_plans(
     progress_callback: ProgressCallback | None = None,
     total_steps: int | None = None,
 ) -> list[ConstructionPlan]:
-    """Place each block at the smallest launch period that keeps all glider paths apart.
+    """Place each block at the smallest launch period whose evolution composes
+    cleanly with every placed block's evolution at every generation.
 
-    Blocks are placed in distance-from-center order. For each block we sweep
-    extra_periods upward and try both outward launch directions implied by the
-    block's position relative to the shared center, accepting the first
-    candidate whose Moore-expanded swept cells are spatially disjoint from every
-    already-placed block. Those blocks are guaranteed independent and run in
-    parallel. When a candidate's footprint touches an existing block we verify
-    by simulating the candidate together with the touching subset; non-touching
-    blocks cannot disturb the result and can be ignored, keeping the
-    verification small.
+    Two checks together let us accept a slot without ever simulating the
+    combined plan. First, every candidate cell must be at Moore distance >= 2
+    from every master cell at the same generation, so no live cell ever sees a
+    neighbor it would not see when its block runs alone. Second, at every dead
+    cell receiving live neighbors from both the candidate and the master, the
+    combined neighbor count must give the same next state as the master and the
+    candidate individually — the only way the planar union can diverge from the
+    union of planar evolutions is if two blocks together flip a dead cell into
+    a state neither of them flips alone, and that flip is fully determined by
+    the per-cell neighbor counts the master tracks across generations.
     """
 
-    placed: list[_PlacedBlock] = []
+    placed_plans: list[ConstructionPlan] = []
+    master_footprint: set[int] = set()
+    master_shadow_per_gen: list[set[int]] = []
+    master_settled_shadow: set[int] = set()
+    master_neighbor_count_per_gen: list[dict[int, int]] = []
+    master_settled_neighbor_count: dict[int, int] = {}
+
     for origin in ordered_origins:
         orientations = _block_orientations(origin, center=center)
+        shift = _shift_constant(origin[0], origin[1])
         accepted = False
         for extra_periods in range(_MAX_PACK_SLOT + 1):
             for orientation in orientations:
                 base_data = _base_block_data(orientation, extra_periods)
-                candidate_footprint = base_data.footprint.translated(origin[0], origin[1])
-
-                touching = [
-                    placed_block
-                    for placed_block in placed
-                    if not placed_block.footprint.isdisjoint(candidate_footprint)
-                ]
-                if not touching:
-                    candidate = plan_block(
-                        origin, orientation=orientation, extra_periods=extra_periods
-                    )
-                    placed.append(
-                        _PlacedBlock(
-                            plan=candidate,
-                            footprint=candidate_footprint,
-                            origin=origin,
-                            orientation=orientation,
-                            extra_periods=extra_periods,
-                        )
-                    )
-                    accepted = True
-                    break
-
-                # Cheap precise pairwise filter: if any single touching block
-                # collides with the candidate at the same generation, the slot
-                # is unreachable. The check is cached on relative geometry, so
-                # the regular text grid produces heavy cache hits.
-                if any(
-                    _pair_conflicts_cached(
-                        tb.orientation,
-                        tb.extra_periods,
-                        orientation,
-                        extra_periods,
-                        origin[0] - tb.origin[0],
-                        origin[1] - tb.origin[1],
-                    )
-                    for tb in touching
+                if not _candidate_safe(
+                    base_data,
+                    shift,
+                    master_footprint,
+                    master_shadow_per_gen,
+                    master_settled_shadow,
+                    master_neighbor_count_per_gen,
+                    master_settled_neighbor_count,
                 ):
                     continue
 
-                candidate = plan_block(origin, orientation=orientation, extra_periods=extra_periods)
-                tentative = combine_plans([tb.plan for tb in touching] + [candidate])
-                expected_patterns = [tb.plan.target_cells for tb in touching]
-                expected_patterns.append(candidate.target_cells)
-                expected = Pattern.merge(*expected_patterns)
-                if evolve_construction(tentative) == expected:
-                    placed.append(
-                        _PlacedBlock(
-                            plan=candidate,
-                            footprint=candidate_footprint,
-                            origin=origin,
-                            orientation=orientation,
-                            extra_periods=extra_periods,
-                        )
-                    )
-                    accepted = True
-                    break
+                candidate = plan_block(
+                    origin, orientation=orientation, extra_periods=extra_periods
+                )
+                placed_plans.append(candidate)
+                _master_absorb(
+                    base_data,
+                    shift,
+                    master_footprint,
+                    master_shadow_per_gen,
+                    master_settled_shadow,
+                    master_neighbor_count_per_gen,
+                    master_settled_neighbor_count,
+                )
+                accepted = True
+                break
             if accepted:
                 break
         if not accepted:
             msg = f"could not pack block at {origin!r} within {_MAX_PACK_SLOT} slots"
             raise ValueError(msg)
         if progress_callback is not None:
-            progress_callback(len(placed), total_steps or len(ordered_origins))
-    return [block.plan for block in placed]
+            progress_callback(len(placed_plans), total_steps or len(ordered_origins))
+    return placed_plans
 
 
-@dataclass(frozen=True, slots=True)
-class _PlacedBlock:
-    """One placed block tagged with the metadata pair-checks need."""
-
-    plan: ConstructionPlan
-    footprint: Pattern
-    origin: Point
-    orientation: str
-    extra_periods: int
-
-
-@cache
-def _pair_conflicts_cached(
-    orientation_a: str,
-    extra_periods_a: int,
-    orientation_b: str,
-    extra_periods_b: int,
-    dx: int,
-    dy: int,
+def _candidate_safe(
+    base_data: _BaseBlockData,
+    shift: int,
+    master_footprint: set[int],
+    master_shadow_per_gen: list[set[int]],
+    master_settled_shadow: set[int],
+    master_neighbor_count_per_gen: list[dict[int, int]],
+    master_settled_neighbor_count: dict[int, int],
 ) -> bool:
-    """Pairwise conflict result for one relative geometry, cached forever.
+    """Return True iff the shifted candidate composes cleanly with the master."""
 
-    Two block constructions either interact at some generation or they do not;
-    the answer is a deterministic function of the launch directions, the relative
-    offset, and the two extra_periods values. Text glyphs reuse the same
-    relative geometry over and over, so this cache becomes the hot path.
+    if not master_footprint:
+        return True
+    # Spacetime-union pre-filter: if no cell ever touched by the candidate is
+    # ever touched by any placed block, both checks below are vacuous.
+    overlapping = False
+    for p in base_data.footprint:
+        if (p + shift) in master_footprint:
+            overlapping = True
+            break
+    if not overlapping:
+        return True
+
+    cand_cells_per_gen = base_data.cells_per_gen
+    cand_settled = base_data.settled
+    cand_len = len(cand_cells_per_gen)
+    master_len = len(master_shadow_per_gen)
+    horizon = max(cand_len, master_len)
+
+    # Pair check: every candidate cell must be at Moore distance >= 2 from
+    # every master cell at the same generation.
+    for t in range(horizon):
+        cand_cells = cand_cells_per_gen[t] if t < cand_len else cand_settled
+        master_shadow = master_shadow_per_gen[t] if t < master_len else master_settled_shadow
+        if not cand_cells or not master_shadow:
+            continue
+        for p in cand_cells:
+            if (p + shift) in master_shadow:
+                return False
+    if cand_settled and master_settled_shadow:
+        for p in cand_settled:
+            if (p + shift) in master_settled_shadow:
+                return False
+
+    # Shared-dead-neighbor check: at any dead cell receiving neighbors from
+    # both, the combined count's next state must match the per-side next state.
+    for t in range(horizon):
+        cand_cells = cand_cells_per_gen[t] if t < cand_len else cand_settled
+        master_nbr = (
+            master_neighbor_count_per_gen[t] if t < master_len else master_settled_neighbor_count
+        )
+        if not cand_cells or not master_nbr:
+            continue
+        if not _shared_neighbors_consistent(cand_cells, shift, master_nbr):
+            return False
+    return (
+        not cand_settled
+        or not master_settled_neighbor_count
+        or _shared_neighbors_consistent(cand_settled, shift, master_settled_neighbor_count)
+    )
+
+
+def _shared_neighbors_consistent(
+    cand_cells: frozenset[int],
+    shift: int,
+    master_nbr: dict[int, int],
+) -> bool:
+    """Return True iff combined neighbor counts at shared dead cells match per-side next states.
+
+    A dead cell becomes alive on the next step iff it has exactly three live
+    neighbors. If both the candidate and the master contribute neighbors at a
+    dead cell, the combined count can cross the 3 threshold even when neither
+    side reaches it alone (or vice versa), which means the union evolves
+    differently from the union of individual evolutions. Catching that here
+    lets us skip the combined-plan simulation that the original packer used as
+    a safety net for this exact case.
     """
 
-    a_data = _base_block_data(orientation_a, extra_periods_a)
-    b_data = _base_block_data(orientation_b, extra_periods_b)
-    return _pair_conflicts_timeline(a_data, (0, 0), b_data, (dx, dy))
+    cand_nbr: dict[int, int] = {}
+    for cell in cand_cells:
+        shifted_cell = cell + shift
+        for nbr_shift in _PURE_NEIGHBOR_SHIFTS:
+            key = shifted_cell + nbr_shift
+            cand_nbr[key] = cand_nbr.get(key, 0) + 1
+    for c, c_n in cand_nbr.items():
+        m_n = master_nbr.get(c, 0)
+        if m_n == 0:
+            continue
+        combined = m_n + c_n
+        if (combined == 3) != (m_n == 3 or c_n == 3):
+            return False
+    return True
+
+
+def _master_absorb(
+    base_data: _BaseBlockData,
+    shift: int,
+    master_footprint: set[int],
+    master_shadow_per_gen: list[set[int]],
+    master_settled_shadow: set[int],
+    master_neighbor_count_per_gen: list[dict[int, int]],
+    master_settled_neighbor_count: dict[int, int],
+) -> None:
+    """Union the shifted candidate's per-generation state into the master."""
+
+    cand_cells_per_gen = base_data.cells_per_gen
+    cand_shadow_per_gen = base_data.shadow_per_gen
+    cand_settled = base_data.settled
+    cand_settled_shadow = base_data.settled_shadow
+    cand_len = len(cand_shadow_per_gen)
+    master_len = len(master_shadow_per_gen)
+
+    shifted_settled_shadow = {p + shift for p in cand_settled_shadow}
+    shifted_settled_nbr_contrib: dict[int, int] = {}
+    for cell in cand_settled:
+        shifted_cell = cell + shift
+        for nbr_shift in _PURE_NEIGHBOR_SHIFTS:
+            key = shifted_cell + nbr_shift
+            shifted_settled_nbr_contrib[key] = shifted_settled_nbr_contrib.get(key, 0) + 1
+
+    if cand_len > master_len:
+        for _ in range(cand_len - master_len):
+            master_shadow_per_gen.append(set(master_settled_shadow))
+            master_neighbor_count_per_gen.append(dict(master_settled_neighbor_count))
+        master_len = cand_len
+
+    for t in range(cand_len):
+        master_shadow_per_gen[t].update(p + shift for p in cand_shadow_per_gen[t])
+        nbr_t = master_neighbor_count_per_gen[t]
+        for cell in cand_cells_per_gen[t]:
+            shifted_cell = cell + shift
+            for nbr_shift in _PURE_NEIGHBOR_SHIFTS:
+                key = shifted_cell + nbr_shift
+                nbr_t[key] = nbr_t.get(key, 0) + 1
+    for t in range(cand_len, master_len):
+        master_shadow_per_gen[t].update(shifted_settled_shadow)
+        nbr_t = master_neighbor_count_per_gen[t]
+        for c, n in shifted_settled_nbr_contrib.items():
+            nbr_t[c] = nbr_t.get(c, 0) + n
+
+    master_settled_shadow.update(shifted_settled_shadow)
+    for c, n in shifted_settled_nbr_contrib.items():
+        master_settled_neighbor_count[c] = master_settled_neighbor_count.get(c, 0) + n
+    master_footprint.update(p + shift for p in base_data.footprint)
 
 
 @dataclass(frozen=True, slots=True)
 class _BaseBlockData:
     """Per-(orientation, extra_periods) precomputed data for one block at origin (0, 0).
 
-    ``cells_per_gen`` and ``shadow_per_gen`` store cells as bit-packed integers
-    rather than ``(x, y)`` tuples so the pairwise-conflict check can shift a
-    timeline by one ``int`` offset and use native ``frozenset`` operations.
+    Cell sets are bit-packed integers so a translation becomes a single integer
+    add and the disjointness check can use native ``set`` operations.
     """
 
-    footprint: Pattern
+    footprint: frozenset[int]
     cells_per_gen: tuple[frozenset[int], ...]
     shadow_per_gen: tuple[frozenset[int], ...]
     settled: frozenset[int]
@@ -891,54 +378,14 @@ def _shift_constant(dx: int, dy: int) -> int:
     return dx * _COORD_SCALE + dy
 
 
-def _pair_conflicts_timeline(
-    a: _BaseBlockData,
-    a_origin: Point,
-    b: _BaseBlockData,
-    b_origin: Point,
-) -> bool:
-    """Return True if A and B have live cells within Moore distance 1 at any same gen.
-
-    Pair conflicts are precisely captured here: two cells that are one apart
-    affect each other's next state directly. Cells two apart cannot pairwise
-    interact (they only meet at a shared neighbor cell that, in the pair,
-    gets a single contribution from each side and stays dead). Multi-block
-    collusion on a shared neighbor still requires a full simulation.
-    """
-
-    shift = _shift_constant(b_origin[0] - a_origin[0], b_origin[1] - a_origin[1])
-    horizon = max(len(a.cells_per_gen), len(b.cells_per_gen))
-    a_settled = a.settled
-    b_settled_shadow = b.settled_shadow
-    a_cells_per_gen = a.cells_per_gen
-    b_shadow_per_gen = b.shadow_per_gen
-    a_len = len(a_cells_per_gen)
-    b_len = len(b_shadow_per_gen)
-    if shift == 0:
-        for t in range(horizon):
-            a_cells = a_cells_per_gen[t] if t < a_len else a_settled
-            b_shadow = b_shadow_per_gen[t] if t < b_len else b_settled_shadow
-            if not a_cells.isdisjoint(b_shadow):
-                return True
-        return not a_settled.isdisjoint(b_settled_shadow)
-    for t in range(horizon):
-        a_cells = a_cells_per_gen[t] if t < a_len else a_settled
-        b_shadow = b_shadow_per_gen[t] if t < b_len else b_settled_shadow
-        for p in a_cells:
-            if (p - shift) in b_shadow:
-                return True
-    return any(p + shift in a_settled for p in b_settled_shadow)
-
-
 @cache
 def _base_block_data(orientation: str, extra_periods: int) -> _BaseBlockData:
-    """Compute footprint and per-generation cell sets for one block at origin (0, 0).
+    """Compute the per-generation Moore-shadow timeline for one block at origin (0, 0).
 
-    The simulation is shared between the spatial footprint (used as the fast
-    pattern-disjoint pre-filter to find touching neighbors) and the per-gen
-    bit-packed cell sets (used by the precise pairwise-conflict filter that
-    rejects bad extra_periods values without ever running a combined-plan
-    simulation).
+    ``footprint`` is the spacetime union of all per-generation shadows plus the
+    settled-state shadow. It is the cheap pre-filter for the master-disjoint
+    check: if no cell the candidate ever touches is ever touched by any placed
+    block, the per-generation check is guaranteed to pass.
     """
 
     plan = plan_block((0, 0), orientation=orientation, extra_periods=extra_periods)
@@ -947,7 +394,7 @@ def _base_block_data(orientation: str, extra_periods: int) -> _BaseBlockData:
 
     if not plan.initial_cells:
         return _BaseBlockData(
-            footprint=Pattern.empty(),
+            footprint=settled_shadow,
             cells_per_gen=(),
             shadow_per_gen=(),
             settled=settled,
@@ -968,7 +415,6 @@ def _base_block_data(orientation: str, extra_periods: int) -> _BaseBlockData:
     points = plan.initial_cells.points
     grid[points[:, 1] - min_y + padding, points[:, 0] - min_x + padding] = True
 
-    swept_arr = grid.copy()
     cells_per_gen: list[frozenset[int]] = []
     shadow_per_gen: list[frozenset[int]] = []
     for _ in range(plan.generations + 1):
@@ -979,14 +425,14 @@ def _base_block_data(orientation: str, extra_periods: int) -> _BaseBlockData:
         )
         cells_per_gen.append(packed)
         shadow_per_gen.append(_expand_packed_with_adjacency(packed))
-        swept_arr |= grid
         grid = _step_array(grid, wrap=False)
 
-    swept_pattern = Pattern.from_grid(swept_arr).translated(min_x - padding, min_y - padding)
-    swept_with_target = Pattern.merge(swept_pattern, plan.target_cells)
-    footprint = _moore_expand_pattern(swept_with_target)
+    footprint_cells: set[int] = set(settled_shadow)
+    for shadow in shadow_per_gen:
+        footprint_cells.update(shadow)
+
     return _BaseBlockData(
-        footprint=footprint,
+        footprint=frozenset(footprint_cells),
         cells_per_gen=tuple(cells_per_gen),
         shadow_per_gen=tuple(shadow_per_gen),
         settled=settled,
@@ -1003,6 +449,9 @@ def _pack_pattern(pattern: Pattern) -> frozenset[int]:
 _NEIGHBOR_SHIFTS: Final[tuple[int, ...]] = tuple(
     _shift_constant(dx, dy) for dx in (-1, 0, 1) for dy in (-1, 0, 1)
 )
+_PURE_NEIGHBOR_SHIFTS: Final[tuple[int, ...]] = tuple(
+    _shift_constant(dx, dy) for dx in (-1, 0, 1) for dy in (-1, 0, 1) if (dx, dy) != (0, 0)
+)
 
 
 def _expand_packed_with_adjacency(cells: frozenset[int]) -> frozenset[int]:
@@ -1012,17 +461,6 @@ def _expand_packed_with_adjacency(cells: frozenset[int]) -> frozenset[int]:
     for shift in _NEIGHBOR_SHIFTS:
         expanded.update(p + shift for p in cells)
     return frozenset(expanded)
-
-
-def _moore_expand_pattern(pattern: Pattern) -> Pattern:
-    if not pattern:
-        return Pattern.empty()
-    offsets = np.asarray(
-        [(dx, dy) for dx in (-1, 0, 1) for dy in (-1, 0, 1)],
-        dtype=np.int32,
-    )
-    expanded = pattern.points[:, None, :] + offsets[None, :, :]
-    return Pattern(expanded.reshape(-1, 2))
 
 
 def _text_pixel_origins(text: str) -> tuple[Point, ...]:

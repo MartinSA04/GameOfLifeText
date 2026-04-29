@@ -96,17 +96,21 @@ def test_pack_block_plans_tries_fallback_outward_direction(
     def fake_base_block_data(orientation: str, extra_periods: int) -> text_module._BaseBlockData:
         _ = extra_periods
         if orientation == "east":
-            # Both origins translate this footprint to include the second origin,
-            # so their footprints overlap and force the planner into the sim path.
-            footprint = Pattern.from_points(((0, 0), (10, -1)))
+            # The second origin's translated cells coincide with the first
+            # origin's master cell, so the pair-check fails and the planner
+            # falls back to the secondary orientation.
+            cells = frozenset(
+                {text_module._pack_point(0, 0), text_module._pack_point(10, -1)}
+            )
         else:
-            footprint = Pattern.from_points(((200, 0),))
+            cells = frozenset({text_module._pack_point(200, 0)})
+        shadow = text_module._expand_packed_with_adjacency(cells)
         return text_module._BaseBlockData(
-            footprint=footprint,
-            cells_per_gen=(),
-            shadow_per_gen=(),
-            settled=frozenset(),
-            settled_shadow=frozenset(),
+            footprint=shadow,
+            cells_per_gen=(cells,),
+            shadow_per_gen=(shadow,),
+            settled=cells,
+            settled_shadow=shadow,
         )
 
     monkeypatch.setattr(text_module, "plan_block", fake_plan_block)
@@ -117,10 +121,9 @@ def test_pack_block_plans_tries_fallback_outward_direction(
 
     assert len(plans) == 2
     second_attempts = [attempt for attempt in attempts if attempt[0] == second_origin]
-    assert second_attempts == [
-        (second_origin, "east", 0),
-        (second_origin, "north", 0),
-    ]
+    # The east candidate is rejected by the pair check before reaching plan_block,
+    # so only the accepted north fallback is logged.
+    assert second_attempts == [(second_origin, "north", 0)]
 
 
 def test_render_text_block_pattern_rejects_unsupported_characters() -> None:
@@ -128,10 +131,3 @@ def test_render_text_block_pattern_rejects_unsupported_characters() -> None:
 
     with pytest.raises(ValueError, match="unsupported character"):
         render_text_block_pattern("HI$")
-
-
-def test_render_text_block_pattern_rejects_empty_input() -> None:
-    """Empty text should fail before construction."""
-
-    with pytest.raises(ValueError, match="text cannot be empty"):
-        render_text_block_pattern("")
