@@ -16,7 +16,7 @@ from .construction import (
     evolve_construction,
     plan_block,
 )
-from .font import FONT_5X7, Glyph
+from .font import DEFAULT_ASCENT, DESCENT, FONT_5X7, Glyph
 from .simulator import (
     Pattern,
     Point,
@@ -464,16 +464,32 @@ def _expand_packed_with_adjacency(cells: frozenset[int]) -> frozenset[int]:
 
 
 def _text_pixel_origins(text: str) -> tuple[Point, ...]:
-    """Return the top-left origin of each live glyph pixel in the text layout."""
+    """Return the top-left origin of each live glyph pixel in the text layout.
+
+    Glyphs on a line are baseline-aligned: each line picks its ascent and
+    descent from the tallest of each on the row, so a 9-row ``Å`` and a
+    7-row ``A`` end at the same bottom edge while a 9-row ``g`` extends two
+    rows further down for its descender.
+    """
 
     origins: list[Point] = []
     line_y = 0
     for line in text.splitlines():
-        cursor_x = 0
-        glyph_height = 0
+        line_glyphs: list[tuple[Glyph, int, int]] = []
+        max_ascent = 0
+        max_descent = 0
         for character in line:
             glyph = glyph_for_character(character)
-            glyph_height = max(glyph_height, len(glyph))
+            descent = DESCENT.get(character, 0)
+            ascent = len(glyph) - descent
+            line_glyphs.append((glyph, ascent, descent))
+            max_ascent = max(max_ascent, ascent)
+            max_descent = max(max_descent, descent)
+        if not line_glyphs:
+            max_ascent = DEFAULT_ASCENT
+        cursor_x = 0
+        for glyph, ascent, _descent in line_glyphs:
+            glyph_top_y = line_y + (max_ascent - ascent) * BLOCK_TEXT_STRIDE
             for glyph_y, row in enumerate(glyph):
                 for glyph_x, token in enumerate(row):
                     if token != "#":
@@ -481,11 +497,11 @@ def _text_pixel_origins(text: str) -> tuple[Point, ...]:
                     origins.append(
                         (
                             cursor_x + glyph_x * BLOCK_TEXT_STRIDE,
-                            line_y + glyph_y * BLOCK_TEXT_STRIDE,
+                            glyph_top_y + glyph_y * BLOCK_TEXT_STRIDE,
                         )
                     )
             cursor_x += len(glyph[0]) * BLOCK_TEXT_STRIDE + BLOCK_TEXT_LETTER_SPACING
-        line_y += glyph_height * BLOCK_TEXT_STRIDE + BLOCK_TEXT_LINE_SPACING
+        line_y += (max_ascent + max_descent) * BLOCK_TEXT_STRIDE + BLOCK_TEXT_LINE_SPACING
     return tuple(origins)
 
 

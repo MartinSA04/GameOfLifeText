@@ -1,14 +1,27 @@
 """Bitmap glyphs for the block-text renderer.
 
 Most glyphs are 5x7 — the historical baseline. Letters with descenders
-(``g``, ``p``, ``q``, ``,``, ``;``) extend to 9 rows; ``Å`` is 9 rows so the
-ring sits above a full-height ``A``. The layout picks a per-line height from
-the tallest glyph on each row, so taller glyphs only push their own line down.
+(``g``, ``j``, ``p``, ``q``, ``y``, ``,``, ``;``) extend to 9 rows by adding
+two rows below the baseline; ``Å`` is 9 rows by sitting two extra rows above
+the baseline so the ring clears a full-height ``A``. The layout picks a
+per-line ascent and descent from the tallest of each on each row and
+baseline-aligns the glyphs so a regular ``A`` and a tall ``Å`` share the same
+bottom edge.
 """
 
 from typing import Final
 
 Glyph = tuple[str, ...]
+DEFAULT_ASCENT: Final[int] = 7
+DESCENT: Final[dict[str, int]] = {
+    "g": 2,
+    "j": 2,
+    "p": 2,
+    "q": 2,
+    "y": 2,
+    ",": 2,
+    ";": 2,
+}
 
 FONT_5X7: Final[dict[str, Glyph]] = {
     " ": (
@@ -644,6 +657,8 @@ FONT_5X7: Final[dict[str, Glyph]] = {
         "..##.",
         "...#.",
         "...#.",
+        "...#.",
+        "...#.",
         "#..#.",
         ".##..",
     ),
@@ -782,9 +797,11 @@ FONT_5X7: Final[dict[str, Glyph]] = {
         ".....",
         "#...#",
         "#...#",
-        ".####",
-        "....#",
-        ".###.",
+        "#...#",
+        ".#.#.",
+        "..#..",
+        "..#..",
+        "##...",
     ),
     "z": (
         ".....",
