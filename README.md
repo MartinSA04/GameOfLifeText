@@ -3,7 +3,7 @@
 A typed PySide6 desktop app for Conway's Game of Life, focused on generating
 stable text from deterministic glider syntheses.
 
-![Game of Life Text Studio demo](./GOL.GIF)
+![Game of Life Text Studio demo](./GOL.webp)
 
 ## Highlights
 
