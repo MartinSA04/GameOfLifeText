@@ -3,6 +3,8 @@
 import ast
 import importlib.util
 import json
+import re
+import struct
 from collections import deque
 from pathlib import Path
 from types import ModuleType
@@ -125,3 +127,70 @@ def test_declared_site_files_exist(name: str) -> None:
     """Catch a renamed asset before the build fails in CI."""
 
     assert (build_web.WEB_ROOT / name).is_file()
+
+
+def _page() -> str:
+    return (build_web.WEB_ROOT / "index.html").read_text(encoding="utf-8")
+
+
+def test_the_site_agrees_with_itself_about_where_it_lives() -> None:
+    """One domain, spelled the same way everywhere a crawler will read it.
+
+    A stale absolute URL is invisible in the browser and expensive in search:
+    it points canonicalisation, the sitemap and every link preview somewhere
+    the site is not.
+    """
+
+    canonical = re.search(r'<link rel="canonical" href="([^"]+)"', _page())
+    assert canonical is not None
+    site = canonical.group(1)
+    assert site.startswith("https://")
+    assert site.endswith("/")
+
+    page = _page()
+    assert f'<meta property="og:url" content="{site}"' in page
+    assert f'<meta property="og:image" content="{site}og.png"' in page
+    assert f'<meta name="twitter:image" content="{site}og.png"' in page
+
+    sitemap = (build_web.WEB_ROOT / "sitemap.xml").read_text(encoding="utf-8")
+    assert f"<loc>{site}</loc>" in sitemap
+
+    robots = (build_web.WEB_ROOT / "robots.txt").read_text(encoding="utf-8")
+    assert f"Sitemap: {site}sitemap.xml" in robots
+
+    for node in json.loads(_structured_data())["@graph"]:
+        assert node["@id"].startswith(site)
+
+
+def _structured_data() -> str:
+    match = re.search(
+        r'<script type="application/ld\+json">(.*?)</script>', _page(), flags=re.DOTALL
+    )
+    assert match is not None
+    return match.group(1)
+
+
+def test_structured_data_is_valid_json_and_claims_nothing_it_cannot_back() -> None:
+    """Fabricated ratings or prices are a manual-action risk, so assert we ship none."""
+
+    graph = json.loads(_structured_data())["@graph"]
+    types = {node["@type"] for node in graph}
+
+    assert {"WebSite", "WebApplication"} <= types
+    assert not any("aggregateRating" in node or "review" in node for node in graph)
+
+    app = next(node for node in graph if node["@type"] == "WebApplication")
+    assert app["offers"]["price"] == "0"
+    assert app["isAccessibleForFree"] is True
+
+
+def test_the_social_card_is_a_png_at_the_size_the_page_advertises() -> None:
+    """Crawlers trust og:image:width/height; a mismatch crops the preview."""
+
+    data = (build_web.WEB_ROOT / "og.png").read_bytes()
+
+    assert data[:8] == b"\x89PNG\r\n\x1a\n"
+    width, height = struct.unpack(">II", data[16:24])
+    page = _page()
+    assert f'<meta property="og:image:width" content="{width}"' in page
+    assert f'<meta property="og:image:height" content="{height}"' in page

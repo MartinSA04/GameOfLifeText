@@ -3,16 +3,115 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Game of Life text, built from colliding gliders</title>
     <meta
       name="description"
-      content="Type a word and watch gliders collide into it. Conway's Game of Life, in the browser."
+      content="Type a word and watch two gliders per pixel collide into still-life blocks that spell it out. Conway's Game of Life, running in your browser."
     />
+    <link rel="canonical" href="https://langton.martinsundal.no/" />
+    <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1" />
+    <meta name="author" content="Martin Sundal Aspås" />
     <meta name="color-scheme" content="dark" />
     <meta name="theme-color" content="#070a08" />
+
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="game_of_life_text" />
+    <meta property="og:url" content="https://langton.martinsundal.no/" />
+    <meta property="og:title" content="Game of Life text, built from colliding gliders" />
+    <meta
+      property="og:description"
+      content="Type a word and watch two gliders per pixel collide into still-life blocks that spell it out. Conway's Game of Life, running in your browser."
+    />
+    <meta property="og:image" content="https://langton.martinsundal.no/og.png" />
+    <meta property="og:image:type" content="image/png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta
+      property="og:image:alt"
+      content="The word life spelled out in Game of Life blocks, with gliders in the corners."
+    />
+    <meta property="og:locale" content="en_US" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Game of Life text, built from colliding gliders" />
+    <meta
+      name="twitter:description"
+      content="Type a word and watch two gliders per pixel collide into still-life blocks that spell it out. Conway's Game of Life, running in your browser."
+    />
+    <meta name="twitter:image" content="https://langton.martinsundal.no/og.png" />
+    <meta
+      name="twitter:image:alt"
+      content="The word life spelled out in Game of Life blocks, with gliders in the corners."
+    />
+
     <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
-    <title>game_of_life_text</title>
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+    <link rel="manifest" href="./site.webmanifest" />
     <link rel="stylesheet" href="./styles.css" />
+
+    <!-- the worker pulls Pyodide from here, so open the connection while the page paints -->
+    <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
+
     <script type="module" src="./src/main.js"></script>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@graph": [
+          {
+            "@type": "WebSite",
+            "@id": "https://langton.martinsundal.no/#website",
+            "url": "https://langton.martinsundal.no/",
+            "name": "game_of_life_text",
+            "description": "Words spelled out by Conway's Game of Life, built from colliding gliders.",
+            "inLanguage": "en",
+            "publisher": { "@id": "https://langton.martinsundal.no/#author" }
+          },
+          {
+            "@type": "Person",
+            "@id": "https://langton.martinsundal.no/#author",
+            "name": "Martin Sundal Aspås",
+            "url": "https://github.com/MartinSA04"
+          },
+          {
+            "@type": "WebApplication",
+            "@id": "https://langton.martinsundal.no/#app",
+            "name": "game_of_life_text",
+            "alternateName": "Game of Life text generator",
+            "url": "https://langton.martinsundal.no/",
+            "description": "Type a word and watch two gliders per pixel collide into still-life blocks that spell it out. Conway's Game of Life, running in the browser.",
+            "applicationCategory": "EducationalApplication",
+            "operatingSystem": "Any",
+            "browserRequirements": "Requires JavaScript and WebAssembly",
+            "isAccessibleForFree": true,
+            "inLanguage": "en",
+            "screenshot": "https://langton.martinsundal.no/og.png",
+            "license": "https://opensource.org/licenses/MIT",
+            "author": { "@id": "https://langton.martinsundal.no/#author" },
+            "offers": {
+              "@type": "Offer",
+              "price": "0",
+              "priceCurrency": "USD"
+            },
+            "featureList": [
+              "Spell any text in Conway's Game of Life using two-glider block syntheses",
+              "Random and blank boards with adjustable density, size, seed and edge wrapping",
+              "Step, run and reset the simulation at up to 60 generations per second",
+              "Draw cells by hand, pan and zoom the board",
+              "Export any pattern as RLE for Golly or LifeViewer"
+            ]
+          },
+          {
+            "@type": "SoftwareSourceCode",
+            "@id": "https://langton.martinsundal.no/#source",
+            "name": "game_of_life_text",
+            "codeRepository": "https://github.com/MartinSA04/GameOfLifeText",
+            "programmingLanguage": ["Python", "TypeScript"],
+            "license": "https://opensource.org/licenses/MIT",
+            "author": { "@id": "https://langton.martinsundal.no/#author" },
+            "about": { "@id": "https://langton.martinsundal.no/#app" }
+          }
+        ]
+      }
+    </script>
   </head>
   <body>
     <a class="skip" href="#stage">skip to board</a>
@@ -30,124 +129,223 @@
       </div>
     </header>
 
-    <main class="layout">
-      <aside class="rail" aria-label="controls">
-        <fieldset class="panel">
-          <legend>seed</legend>
-          <div class="segmented">
-            <input type="radio" name="mode" id="mode-text" value="text" checked />
-            <label for="mode-text">text</label>
-            <input type="radio" name="mode" id="mode-random" value="random" />
-            <label for="mode-random">random</label>
-            <input type="radio" name="mode" id="mode-blank" value="blank" />
-            <label for="mode-blank">blank</label>
-          </div>
-        </fieldset>
+    <main>
+      <div class="layout">
+        <aside class="rail" aria-label="controls">
+          <fieldset class="panel">
+            <legend>seed</legend>
+            <div class="segmented">
+              <input type="radio" name="mode" id="mode-text" value="text" checked />
+              <label for="mode-text">text</label>
+              <input type="radio" name="mode" id="mode-random" value="random" />
+              <label for="mode-random">random</label>
+              <input type="radio" name="mode" id="mode-blank" value="blank" />
+              <label for="mode-blank">blank</label>
+            </div>
+          </fieldset>
 
-        <section class="panel" id="text-panel">
-          <label for="text-input">text</label>
-          <textarea id="text-input" rows="2" maxlength="80" spellcheck="false">life</textarea>
-          <p class="meta"><span>5x7 ascii glyphs</span><span id="text-count">4/80</span></p>
-          <button class="btn primary" id="generate" type="button" disabled>generate</button>
-        </section>
+          <section class="panel" id="text-panel">
+            <label for="text-input">text</label>
+            <textarea id="text-input" rows="2" maxlength="80" spellcheck="false">life</textarea>
+            <p class="meta"><span>5x7 ascii glyphs</span><span id="text-count">4/80</span></p>
+            <button class="btn primary" id="generate" type="button" disabled>generate</button>
+          </section>
 
-        <section class="panel" id="board-panel" hidden>
-          <div class="pair">
+          <section class="panel" id="board-panel" hidden>
+            <div class="pair">
+              <span class="field">
+                <label for="width">width</label>
+                <input id="width" type="number" min="8" max="500" value="160" />
+              </span>
+              <span class="field">
+                <label for="height">height</label>
+                <input id="height" type="number" min="8" max="500" value="100" />
+              </span>
+            </div>
             <span class="field">
-              <label for="width">width</label>
-              <input id="width" type="number" min="8" max="500" value="160" />
+              <label for="density"
+                >density <output id="density-out" for="density">20%</output></label
+              >
+              <input id="density" type="range" min="1" max="60" value="20" />
             </span>
             <span class="field">
-              <label for="height">height</label>
-              <input id="height" type="number" min="8" max="500" value="100" />
+              <label for="seed">rng seed</label>
+              <input id="seed" type="number" value="2026" />
             </span>
+            <label class="check"><input type="checkbox" id="wrap" checked /> wrap edges</label>
+            <button class="btn primary" id="build" type="button">new random board</button>
+          </section>
+
+          <section class="panel">
+            <div class="triple">
+              <button class="btn" id="run" type="button">run</button>
+              <button class="btn" id="step" type="button">step</button>
+              <button class="btn" id="reset" type="button">reset</button>
+            </div>
+            <span class="field">
+              <label for="speed">speed <output id="speed-out" for="speed">12/s</output></label>
+              <input id="speed" type="range" min="1" max="60" value="12" />
+            </span>
+          </section>
+
+          <section class="panel" id="progress" hidden>
+            <label for="progress-bar"
+              ><span id="progress-name">settle</span>
+              <output id="progress-out" for="progress-bar">0/0</output></label
+            >
+            <progress id="progress-bar" value="0" max="100"></progress>
+          </section>
+
+          <p class="error" id="error" role="alert" hidden></p>
+
+          <dl class="keys">
+            <dt><kbd>space</kbd></dt>
+            <dd>run / pause</dd>
+            <dt><kbd>s</kbd></dt>
+            <dd>step</dd>
+            <dt><kbd>r</kbd></dt>
+            <dd>reset to seed</dd>
+            <dt><kbd>t</kbd></dt>
+            <dd>target / board</dd>
+            <dt><kbd>d</kbd></dt>
+            <dd>draw</dd>
+            <dt><kbd>g</kbd></dt>
+            <dd>ghost target</dd>
+            <dt><kbd>f</kbd></dt>
+            <dd>fit</dd>
+            <dt><kbd>+ -</kbd></dt>
+            <dd>zoom</dd>
+            <dt>drag</dt>
+            <dd>pan</dd>
+          </dl>
+        </aside>
+
+        <section class="stage" id="stage" aria-label="board">
+          <div class="stage-bar">
+            <div class="views" id="views" hidden>
+              <button class="tool" id="view-board" type="button" aria-pressed="true">board</button>
+              <button class="tool" id="view-target" type="button" aria-pressed="false">
+                target
+              </button>
+            </div>
+            <div class="tools">
+              <label class="check" id="ghost-toggle" hidden>
+                <input type="checkbox" id="ghost" checked /> ghost
+              </label>
+              <button class="tool" id="draw" type="button" aria-pressed="false">draw</button>
+              <button class="tool" id="zoom-out" type="button" aria-label="zoom out">
+                &minus;
+              </button>
+              <button class="tool" id="fit" type="button">fit</button>
+              <button class="tool" id="zoom-in" type="button" aria-label="zoom in">+</button>
+              <button class="tool" id="export" type="button" disabled>export .rle</button>
+            </div>
           </div>
-          <span class="field">
-            <label for="density">density <output id="density-out" for="density">20%</output></label>
-            <input id="density" type="range" min="1" max="60" value="20" />
-          </span>
-          <span class="field">
-            <label for="seed">rng seed</label>
-            <input id="seed" type="number" value="2026" />
-          </span>
-          <label class="check"><input type="checkbox" id="wrap" checked /> wrap edges</label>
-          <button class="btn primary" id="build" type="button">new random board</button>
+
+          <div class="canvas-wrap" id="canvas-wrap">
+            <canvas id="canvas" aria-label="game of life board"></canvas>
+            <p class="boot" id="boot"><span id="boot-label">booting python</span></p>
+          </div>
+
+          <div class="stage-status">
+            <span class="stat"><span>gen</span><strong id="stat-gen">0</strong></span>
+            <span class="stat"><span>live</span><strong id="stat-live">0</strong></span>
+            <span class="stat"><span>board</span><strong id="stat-size">0×0</strong></span>
+            <p id="status" aria-live="polite">waiting for python</p>
+          </div>
         </section>
+      </div>
 
-        <section class="panel">
-          <div class="triple">
-            <button class="btn" id="run" type="button">run</button>
-            <button class="btn" id="step" type="button">step</button>
-            <button class="btn" id="reset" type="button">reset</button>
-          </div>
-          <span class="field">
-            <label for="speed">speed <output id="speed-out" for="speed">12/s</output></label>
-            <input id="speed" type="range" min="1" max="60" value="12" />
-          </span>
-        </section>
+      <article class="about">
+        <h2>Words made of still lifes</h2>
+        <p>
+          Every character here comes from a 5x7 bitmap font. Each lit pixel of a glyph becomes a 2x2
+          block, the smallest still life in Conway's Game of Life, so the finished word sits on the
+          board unchanged instead of decaying the moment the simulation runs. Nothing paints those
+          blocks directly. All of them are built by gliders launched from outside the text,
+          colliding in the right place at the right time.
+        </p>
+        <p>
+          One block takes two gliders. Fire them on the right offset and four generations later they
+          have eaten each other down to a single 2x2 block. That collision is the only building
+          material in the app, and the real problem is scheduling a few hundred of them so that no
+          glider ever clips a block that is already finished, or one that is still on its way in.
+        </p>
 
-        <section class="panel" id="progress" hidden>
-          <label for="progress-bar"
-            ><span id="progress-name">settle</span>
-            <output id="progress-out" for="progress-bar">0/0</output></label
-          >
-          <progress id="progress-bar" value="0" max="100"></progress>
-        </section>
+        <h2>How the search works</h2>
+        <p>
+          Blocks are placed one at a time, sorted by distance from the centre of the text. The
+          middle of a word is the hardest place to reach once the outside is standing, so it gets
+          built first, while later gliders still have empty board to fly across.
+        </p>
+        <p>
+          Each block takes its launch direction from where it sits relative to that centre, so a
+          block up and to the right is built by gliders arriving from up and to the right. The
+          dominant axis is tried first and the other axis is kept as a fallback, which gives every
+          block two orientations to work with.
+        </p>
+        <p>
+          Then there is the delay. A glider repeats its own shape every four generations, so a
+          synthesis can be launched any whole number of periods early and still land on exactly the
+          same square, just later. The planner walks these delay slots upward from zero, trying both
+          orientations at each one, and keeps the first combination that fits. That is the whole
+          search: the smallest delay that works, the first orientation that works, no backtracking.
+          Text dense enough to exhaust the slot budget is rejected rather than approximated.
+        </p>
+        <p>
+          What keeps it quick is the test for whether a candidate fits. Re-simulating the board for
+          every candidate would be far too slow, so the planner never simulates the combination at
+          all. Instead it carries a running summary of the work already placed: every cell any
+          construction touches at every generation, and how many live neighbours each dead cell is
+          being handed at each generation. A candidate is accepted when two conditions hold.
+        </p>
+        <ul>
+          <li>
+            At every generation, each live cell of the candidate is at least two steps away from
+            every live cell already placed, measured on the Moore neighbourhood. No cell ever sees a
+            neighbour it would not have seen with its own block running alone.
+          </li>
+          <li>
+            At every dead cell being fed live neighbours by both the candidate and the placed work,
+            the combined count has to produce the same next state that each side produces on its
+            own. This is the only way two harmless patterns can turn into something new together:
+            between them they flip a cell that neither of them flips alone.
+          </li>
+        </ul>
+        <p>
+          Hold both and the two patterns laid on top of each other evolve exactly the way they
+          evolve apart, which is what lets a slot be accepted after one comparison against the
+          summary rather than a fresh run of the board. A cheap filter runs before either check: if
+          the candidate never touches a cell that any placed block touches at any generation, the
+          checks are vacuous and the slot is taken immediately.
+        </p>
+        <p>
+          Once every block has a slot the combined seed is simulated once, in full, and compared
+          against the target. If a single cell is out of place the construction is thrown away
+          instead of shown, so anything that reaches the canvas is known to settle exactly.
+        </p>
 
-        <p class="error" id="error" role="alert" hidden></p>
+        <h2>Exporting patterns</h2>
+        <p>
+          The <strong>export .rle</strong> button writes the current board as Run Length Encoded
+          text, the usual interchange format for Life patterns, so a word built here opens unchanged
+          in Golly or LifeViewer. Boards can also be seeded at random or left blank and drawn on by
+          hand, with wrapping edges on or off.
+        </p>
 
-        <dl class="keys">
-          <dt><kbd>space</kbd></dt>
-          <dd>run / pause</dd>
-          <dt><kbd>s</kbd></dt>
-          <dd>step</dd>
-          <dt><kbd>r</kbd></dt>
-          <dd>reset to seed</dd>
-          <dt><kbd>t</kbd></dt>
-          <dd>target / board</dd>
-          <dt><kbd>d</kbd></dt>
-          <dd>draw</dd>
-          <dt><kbd>g</kbd></dt>
-          <dd>ghost target</dd>
-          <dt><kbd>f</kbd></dt>
-          <dd>fit</dd>
-          <dt><kbd>+ -</kbd></dt>
-          <dd>zoom</dd>
-          <dt>drag</dt>
-          <dd>pan</dd>
-        </dl>
-      </aside>
-
-      <section class="stage" id="stage" aria-label="board">
-        <div class="stage-bar">
-          <div class="views" id="views" hidden>
-            <button class="tool" id="view-board" type="button" aria-pressed="true">board</button>
-            <button class="tool" id="view-target" type="button" aria-pressed="false">target</button>
-          </div>
-          <div class="tools">
-            <label class="check" id="ghost-toggle" hidden>
-              <input type="checkbox" id="ghost" checked /> ghost
-            </label>
-            <button class="tool" id="draw" type="button" aria-pressed="false">draw</button>
-            <button class="tool" id="zoom-out" type="button" aria-label="zoom out">&minus;</button>
-            <button class="tool" id="fit" type="button">fit</button>
-            <button class="tool" id="zoom-in" type="button" aria-label="zoom in">+</button>
-            <button class="tool" id="export" type="button" disabled>export .rle</button>
-          </div>
-        </div>
-
-        <div class="canvas-wrap" id="canvas-wrap">
-          <canvas id="canvas" aria-label="game of life board"></canvas>
-          <p class="boot" id="boot"><span id="boot-label">booting python</span></p>
-        </div>
-
-        <div class="stage-status">
-          <span class="stat"><span>gen</span><strong id="stat-gen">0</strong></span>
-          <span class="stat"><span>live</span><strong id="stat-live">0</strong></span>
-          <span class="stat"><span>board</span><strong id="stat-size">0×0</strong></span>
-          <p id="status" aria-live="polite">waiting for python</p>
-        </div>
-      </section>
+        <h2>How it runs</h2>
+        <p>
+          The canvas and the simulation loop are TypeScript. The planner is the same Python package
+          that backs the desktop build, running under Pyodide in a worker thread, which is why the
+          first visit spends a moment fetching a WebAssembly runtime and NumPy before the generate
+          button lights up. After that it is cached.
+        </p>
+        <p>
+          The source, including the PySide6 desktop version, is on
+          <a href="https://github.com/MartinSA04/GameOfLifeText" rel="noreferrer">GitHub</a> under
+          the MIT licence.
+        </p>
+      </article>
     </main>
 
     <noscript>
