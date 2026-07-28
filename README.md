@@ -1,65 +1,77 @@
-# Game of Life Text Studio
+# game-of-life-text
 
-A typed PySide6 desktop app for Conway's Game of Life, focused on generating
-stable text from deterministic glider syntheses.
+Type a word, and it gets built out of colliding gliders in Conway's Game of
+Life. Two gliders per pixel, aimed and delayed so nothing interferes, and the
+whole thing settles into still-life blocks that spell what you typed.
 
-![Game of Life Text Studio demo](./GOL.webp)
+Runs as a PySide6 desktop app, or in the browser at
+[martinsa04.github.io/GameOfLifeText](https://martinsa04.github.io/GameOfLifeText/).
 
-## Highlights
+![demo](./GOL.webp)
 
-- Text-first workflow for stable block-text generation, including uppercase and lowercase letters.
-- Determinate generation progress while the glider construction is built.
-- Settle progress while the board evolves into the final text.
-- Auto-sized text boards, with manual board size only shown for random and blank boards.
-- Focused text/board preview modes, zoom, run/pause, stepping, and draw mode.
-- Random and blank board modes for sandboxing and drawing from scratch.
-- Exportable stable-text seed plans as centered `x,y` cells.
+## Desktop app
 
-## Requirements
-
-- Python 3.14+ (`.python-version` pins the current 3.14.4 release)
-- [`uv`](https://docs.astral.sh/uv/)
-
-## Quick Start
+Needs Python 3.14 (pinned in `.python-version`) and
+[uv](https://docs.astral.sh/uv/).
 
 ```bash
-uv python install 3.14.4
-uv sync --python 3.14.4
-uv run game-of-life-gui
+uv sync
+uv run gol-gui
 ```
 
-If Python 3.14.4 is already installed, `uv sync` is enough.
+Type text, hit `Generate`, then run the board until the settle bar fills. The
+`Text` and `Board` toggles switch between the finished text and the glider seed;
+`Randomize` and `Blank` give you a sandbox to draw in instead.
 
-## Workflow
+## Browser app
 
-1. Open the app in stable-text mode.
-2. Type supported ASCII text, including uppercase and lowercase letters.
-3. Select `Generate`.
-4. Watch the generation progress, then run or step the board until the settle bar completes.
-5. Use `Text` and `Board` preview toggles to switch between the finished text and the full seed.
+The canvas and the simulation loop are TypeScript. The planner is the same
+Python package, running in a Pyodide worker — the first visit downloads the
+WebAssembly runtime and NumPy, then caches them.
 
-## Controls
+```bash
+mise run web    # builds dist/ and serves it on :8000
+```
 
-- `Generate`: builds a stable-text glider seed.
-- `Randomize`: creates a random board using density and optional seed.
-- `Blank`: creates an empty board with the chosen dimensions.
-- `Draw mode`: left-drag adds cells, right-drag erases cells.
-- `Run` / `Pause`: starts and stops evolution.
-- `Step`: advances one generation.
-- `+` / `-`: zooms the board preview.
+Keyboard: `space` run/pause, `s` step, `r` reset, `t` target/board, `d` draw,
+`g` ghost, `f` fit, `+`/`-` zoom. Drag pans, the wheel zooms. `export .rle`
+writes the pattern in RLE, so it opens in Golly or LifeViewer.
 
-## How It Works
+## How it works
 
-The text renderer turns glyph pixels into 2x2 still-life blocks. The planner
-places two-glider syntheses from the text center outward, choosing launch
-directions and delays that avoid collisions. Every generated construction is
-verified before it is shown in the GUI.
+The renderer turns glyph pixels into 2x2 blocks. The planner walks those blocks
+outward from the center, and for each one picks a two-glider synthesis whose
+launch direction and delay keep its gliders clear of every block already placed
+and of the blocks still to come. Constructions are verified by simulation before
+anything is shown.
+
+## Layout
+
+| Path                    | What it is                                        |
+| ----------------------- | ------------------------------------------------- |
+| `src/game_of_life_text` | Simulator, font, planner, GUI, browser bridge     |
+| `web/`                  | The browser app: TypeScript, one stylesheet, HTML |
+| `scripts/build_web.py`  | Stages `dist/`; `tsc` compiles into it            |
+| `tests/`                | pytest for Python, vitest under `tests/web`       |
 
 ## Development
 
 ```bash
-uv run ruff check .
-uv run ruff format --check .
-uv run ty check
-uv run pytest
+mise run check      # everything below, in one go
+mise run test       # pytest
+mise run test:web   # vitest
+mise run lint       # ruff check + ruff format --check
+mise run lint:web   # eslint + prettier + markdownlint
+mise run typecheck  # ty
+mise run build      # dist/
 ```
+
+Without mise: `uv run pytest`, `uv run ruff check`, `uv run ty check`,
+`npm test`, `npm run typecheck`, `npm run lint`, `npm run build`.
+
+CI runs the Python and web checks on every push. Pushing to `main` deploys
+`dist/` to GitHub Pages.
+
+## License
+
+MIT
