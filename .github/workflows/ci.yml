@@ -23,7 +23,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v9
+      # Pinned to the exact release: setup-uv publishes moving major tags only
+      # up to v7, so `@v9` does not resolve.
+      - uses: astral-sh/setup-uv@v9.0.0
         with:
           enable-cache: true
       # PySide6 ships its own Qt build but links against these system libraries,
@@ -54,7 +56,7 @@ jobs:
           cache: npm
       # scripts/build_web.py is standard-library only, so the bundle needs an
       # interpreter but not the project's PySide6 environment.
-      - uses: astral-sh/setup-uv@v9
+      - uses: astral-sh/setup-uv@v9.0.0
         with:
           enable-cache: true
       - run: npm ci
