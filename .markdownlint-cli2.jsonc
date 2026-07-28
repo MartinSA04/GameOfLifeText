@@ -1,0 +1,11 @@
+{
+  "config": {
+    "default": true,
+    // Prettier owns line width for Markdown.
+    "MD013": false,
+    // Bare URLs are fine in a README.
+    "MD034": false
+  },
+  "globs": ["**/*.md"],
+  "ignores": ["node_modules/**", ".venv/**", "dist/**", ".pytest_cache/**"]
+}

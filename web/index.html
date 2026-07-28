@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta
+      name="description"
+      content="Type a word and watch gliders collide into it. Conway's Game of Life, in the browser."
+    />
+    <meta name="color-scheme" content="dark" />
+    <meta name="theme-color" content="#070a08" />
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+    <title>game_of_life_text</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script type="module" src="./src/main.js"></script>
+  </head>
+  <body>
+    <a class="skip" href="#stage">skip to board</a>
+
+    <header class="topbar">
+      <div class="brand">
+        <span class="glider" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
+        <h1>game_of_life_text</h1>
+      </div>
+      <div class="topbar-meta">
+        <p class="engine" id="engine" data-state="loading" role="status" aria-live="polite">
+          <span class="led" aria-hidden="true"></span><span id="engine-label">booting python</span>
+        </p>
+        <a href="https://github.com/MartinSA04/GameOfLifeText" rel="noreferrer">github</a>
+      </div>
+    </header>
+
+    <main class="layout">
+      <aside class="rail" aria-label="controls">
+        <fieldset class="panel">
+          <legend>seed</legend>
+          <div class="segmented">
+            <input type="radio" name="mode" id="mode-text" value="text" checked />
+            <label for="mode-text">text</label>
+            <input type="radio" name="mode" id="mode-random" value="random" />
+            <label for="mode-random">random</label>
+            <input type="radio" name="mode" id="mode-blank" value="blank" />
+            <label for="mode-blank">blank</label>
+          </div>
+        </fieldset>
+
+        <section class="panel" id="text-panel">
+          <label for="text-input">text</label>
+          <textarea id="text-input" rows="2" maxlength="80" spellcheck="false">life</textarea>
+          <p class="meta"><span>5x7 ascii glyphs</span><span id="text-count">4/80</span></p>
+          <button class="btn primary" id="generate" type="button" disabled>generate</button>
+        </section>
+
+        <section class="panel" id="board-panel" hidden>
+          <div class="pair">
+            <span class="field">
+              <label for="width">width</label>
+              <input id="width" type="number" min="8" max="500" value="160" />
+            </span>
+            <span class="field">
+              <label for="height">height</label>
+              <input id="height" type="number" min="8" max="500" value="100" />
+            </span>
+          </div>
+          <span class="field">
+            <label for="density">density <output id="density-out" for="density">20%</output></label>
+            <input id="density" type="range" min="1" max="60" value="20" />
+          </span>
+          <span class="field">
+            <label for="seed">rng seed</label>
+            <input id="seed" type="number" value="2026" />
+          </span>
+          <label class="check"><input type="checkbox" id="wrap" checked /> wrap edges</label>
+          <button class="btn primary" id="build" type="button">new random board</button>
+        </section>
+
+        <section class="panel">
+          <div class="triple">
+            <button class="btn" id="run" type="button">run</button>
+            <button class="btn" id="step" type="button">step</button>
+            <button class="btn" id="reset" type="button">reset</button>
+          </div>
+          <span class="field">
+            <label for="speed">speed <output id="speed-out" for="speed">12/s</output></label>
+            <input id="speed" type="range" min="1" max="60" value="12" />
+          </span>
+        </section>
+
+        <section class="panel" id="progress" hidden>
+          <label for="progress-bar"
+            ><span id="progress-name">settle</span>
+            <output id="progress-out" for="progress-bar">0/0</output></label
+          >
+          <progress id="progress-bar" value="0" max="100"></progress>
+        </section>
+
+        <p class="error" id="error" role="alert" hidden></p>
+
+        <dl class="keys">
+          <dt><kbd>space</kbd></dt>
+          <dd>run / pause</dd>
+          <dt><kbd>s</kbd></dt>
+          <dd>step</dd>
+          <dt><kbd>r</kbd></dt>
+          <dd>reset to seed</dd>
+          <dt><kbd>t</kbd></dt>
+          <dd>target / board</dd>
+          <dt><kbd>d</kbd></dt>
+          <dd>draw</dd>
+          <dt><kbd>g</kbd></dt>
+          <dd>ghost target</dd>
+          <dt><kbd>f</kbd></dt>
+          <dd>fit</dd>
+          <dt><kbd>+ -</kbd></dt>
+          <dd>zoom</dd>
+          <dt>drag</dt>
+          <dd>pan</dd>
+        </dl>
+      </aside>
+
+      <section class="stage" id="stage" aria-label="board">
+        <div class="stage-bar">
+          <div class="views" id="views" hidden>
+            <button class="tool" id="view-board" type="button" aria-pressed="true">board</button>
+            <button class="tool" id="view-target" type="button" aria-pressed="false">target</button>
+          </div>
+          <div class="tools">
+            <label class="check" id="ghost-toggle" hidden>
+              <input type="checkbox" id="ghost" checked /> ghost
+            </label>
+            <button class="tool" id="draw" type="button" aria-pressed="false">draw</button>
+            <button class="tool" id="zoom-out" type="button" aria-label="zoom out">&minus;</button>
+            <button class="tool" id="fit" type="button">fit</button>
+            <button class="tool" id="zoom-in" type="button" aria-label="zoom in">+</button>
+            <button class="tool" id="export" type="button" disabled>export .rle</button>
+          </div>
+        </div>
+
+        <div class="canvas-wrap" id="canvas-wrap">
+          <canvas id="canvas" aria-label="game of life board"></canvas>
+          <p class="boot" id="boot"><span id="boot-label">booting python</span></p>
+        </div>
+
+        <div class="stage-status">
+          <span class="stat"><span>gen</span><strong id="stat-gen">0</strong></span>
+          <span class="stat"><span>live</span><strong id="stat-live">0</strong></span>
+          <span class="stat"><span>board</span><strong id="stat-size">0×0</strong></span>
+          <p id="status" aria-live="polite">waiting for python</p>
+        </div>
+      </section>
+    </main>
+
+    <noscript>
+      <p class="error noscript">this needs javascript and webassembly.</p>
+    </noscript>
+  </body>
+</html>

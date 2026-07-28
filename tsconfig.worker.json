@@ -1,0 +1,9 @@
+{
+  // The Pyodide worker. Same options as the page, but with the worker globals
+  // instead of the DOM ones — the two libs cannot be loaded in one program.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "WebWorker"]
+  },
+  "include": ["web/engine-worker.ts", "web/types/**/*.d.ts"]
+}

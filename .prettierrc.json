@@ -1,0 +1,10 @@
+{
+  "printWidth": 100,
+  "trailingComma": "none",
+  "overrides": [
+    {
+      "files": "*.md",
+      "options": { "printWidth": 80 }
+    }
+  ]
+}

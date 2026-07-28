@@ -1,0 +1,28 @@
+{
+  // The page's modules. tsc is the entire JS build: it emits plain ES modules
+  // that the browser loads directly, so nothing sits between these sources and
+  // what ships. The worker compiles separately (tsconfig.worker.json) because
+  // it needs the WebWorker lib instead of DOM.
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "strict": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "exactOptionalPropertyTypes": true,
+    "verbatimModuleSyntax": true,
+    "isolatedModules": true,
+    "skipLibCheck": true,
+    // Nothing on the page has ambient types: no @types package should leak in.
+    "types": [],
+    // Inline sources so the maps work on the deployed site, where the .ts
+    // files they would otherwise point at do not exist.
+    "sourceMap": true,
+    "inlineSources": true,
+    "rootDir": "web",
+    "outDir": "dist"
+  },
+  "include": ["web/src/**/*.ts", "web/types/**/*.d.ts"]
+}

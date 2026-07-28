@@ -2,15 +2,22 @@
 __pycache__/
 *.py[oc]
 build/
-dist/
 wheels/
 *.egg-info
 
+# Build output: python wheels and the browser bundle from scripts/build_web.py
+dist/
+
 # Virtual environments
 .venv
+
+# Node dev tooling (vitest, eslint, prettier)
+node_modules/
 
 # Profiling artifacts
 profiling/*.lprof
 profiling/*.txt
 
+# Agent scratch
 .codex
+.claude/settings.local.json
