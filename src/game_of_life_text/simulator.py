@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
+from typing import cast
 
 import numpy as np
 import numpy.typing as npt
@@ -404,4 +405,7 @@ def _points_from_iterable(points: Iterable[Point]) -> PointArray:
 
 def _structured_points_view(points: PointArray) -> npt.NDArray[np.void]:
     dtype = np.dtype([("x", np.int32), ("y", np.int32)])
-    return np.ascontiguousarray(points).view(dtype).reshape(-1)
+    view = np.ascontiguousarray(points).view(dtype).reshape(-1)
+    # NumPy's stubs type `view(dtype)` from the array's own dtype rather than
+    # the requested one, so the structured element type has to be asserted.
+    return cast("npt.NDArray[np.void]", view)
