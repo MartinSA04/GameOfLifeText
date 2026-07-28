@@ -28,6 +28,9 @@ jobs:
       - uses: astral-sh/setup-uv@v9.0.0
         with:
           enable-cache: true
+          # Both jobs run in parallel and would otherwise race to save one
+          # shared cache key, which fails the save and annotates the run.
+          cache-suffix: python
       # PySide6 ships its own Qt build but links against these system libraries,
       # and tests/test_gui.py drives real widgets under QT_QPA_PLATFORM=offscreen
       # — without them the platform plugin fails to load. Same list as
@@ -59,6 +62,7 @@ jobs:
       - uses: astral-sh/setup-uv@v9.0.0
         with:
           enable-cache: true
+          cache-suffix: web
       - run: npm ci
       - run: npm run lint
       - run: npm run format:check
