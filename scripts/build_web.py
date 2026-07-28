@@ -26,7 +26,22 @@ WEB_ROOT = REPO_ROOT / "web"
 PACKAGE_NAME = "game_of_life_text"
 PACKAGE_ROOT = REPO_ROOT / "src" / PACKAGE_NAME
 
-SITE_FILES = ("index.html", "styles.css", "favicon.svg")
+# The page, its assets, and the files crawlers ask for by name at the site root.
+# Everything the page itself references stays relative; only the canonical URL,
+# the sitemap and the social card carry the absolute domain, which
+# tests/test_build_web.py checks agree with each other.
+SITE_FILES = (
+    "index.html",
+    "styles.css",
+    "favicon.svg",
+    "apple-touch-icon.png",
+    "icon-192.png",
+    "icon-512.png",
+    "og.png",
+    "site.webmanifest",
+    "robots.txt",
+    "sitemap.xml",
+)
 
 # The planner and its dependencies, and nothing else: gui.py and the profiling
 # entry points import PySide6 and line-profiler, which Pyodide has no wheels
