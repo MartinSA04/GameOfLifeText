@@ -5,7 +5,7 @@ Life. Two gliders per pixel, aimed and delayed so nothing interferes, and the
 whole thing settles into still-life blocks that spell what you typed.
 
 Runs as a PySide6 desktop app, or in the browser at
-[langton.martinsundal.no](https://langton.martinsundal.no/).
+[conway.martinsundal.no](https://conway.martinsundal.no/).
 
 ![demo](./GOL.webp)
 
