@@ -178,9 +178,7 @@ def _pack_block_plans(
                 ):
                     continue
 
-                candidate = plan_block(
-                    origin, orientation=orientation, extra_periods=extra_periods
-                )
+                candidate = plan_block(origin, orientation=orientation, extra_periods=extra_periods)
                 placed_plans.append(candidate)
                 _master_absorb(
                     base_data,

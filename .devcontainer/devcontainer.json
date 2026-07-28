@@ -1,0 +1,92 @@
+{
+  "name": "game-of-life-text",
+  "image": "mcr.microsoft.com/devcontainers/base:ubuntu",
+  // Personal baseline (mise + git + gh + Claude Code, and zsh/starship),
+  // published from github.com/MartinSA04/devcontainer-base (template: mise-claude).
+  //
+  // As of feature v1.2.0, Claude persistence (the CLAUDE_CONFIG_DIR env, the
+  // claude-${devcontainerId} volume, and its chown) is baked into the feature
+  // itself — so there is nothing to wire up here for it.
+  "features": {
+    "ghcr.io/martinsa04/devcontainer-base/mise-and-tools:1": {
+      "installZsh": true,
+      "installClaudeCode": true,
+      "claudeCodeVersion": "latest"
+    }
+  },
+  // Keep .venv in a named volume (keyed by ${devcontainerId}, so it's isolated
+  // per project and survives rebuilds) => the container's Linux PySide6 wheels
+  // never collide with a .venv built by tooling on the host, and `uv sync` is
+  // faster after a rebuild.
+  //
+  // The id_git mount gives the container your GitHub SSH key (read-only). Only
+  // ~/.ssh/id_git is exposed — never your other keys — and post-create.sh writes
+  // an ~/.ssh/config that pins github.com to it. Without this, the forwarded SSH
+  // agent may offer another key first (e.g. a read-only work deploy key), which
+  // wins the handshake and blocks pushes. Requires ~/.ssh/id_git on the host (a
+  // key registered on your GitHub account); drop this line and the ssh block in
+  // post-create.sh if unused.
+  //
+  // The gh mount persists the GitHub CLI's credentials (~/.config/gh) from the
+  // host, so `gh` stays authenticated across rebuilds without re-running
+  // `gh auth login`. Read-write on purpose: gh rewrites hosts.yml on token
+  // refresh. Requires ~/.config/gh on the host (run `gh auth login` there once).
+  //
+  // The X11 socket mount is what makes the PySide6 GUI (`mise run gui`) actually
+  // open a window on the host display — see containerEnv.DISPLAY below. Linux
+  // hosts only; on macOS/Windows drop this line and the DISPLAY env, and rely on
+  // QT_QPA_PLATFORM=offscreen (which the tests set for themselves anyway).
+  "mounts": [
+    "source=venv-${devcontainerId},target=${containerWorkspaceFolder}/.venv,type=volume",
+    "source=${localEnv:HOME}/.ssh/id_git,target=/home/vscode/.ssh/id_git,type=bind,readonly",
+    "source=${localEnv:HOME}/.config/gh,target=/home/vscode/.config/gh,type=bind",
+    "source=/tmp/.X11-unix,target=/tmp/.X11-unix,type=bind"
+  ],
+  // Qt talks to the host X server over the socket mounted above. The container's
+  // vscode user shares the host UID (devcontainers remap it), so the host's
+  // default `SI:localuser:<you>` xhost rule already authorizes it and no xauth
+  // cookie is needed. If a window ever fails to open with an "Authorization
+  // required" error, run `xhost +SI:localuser:$(id -un)` on the host once.
+  "containerEnv": {
+    "DISPLAY": "${localEnv:DISPLAY}"
+  },
+  // Provisioning (venv-volume ownership, the Qt runtime libs PySide6 needs, the
+  // mise toolchain, `uv sync`, and the GitHub SSH config) lives in
+  // .devcontainer/post-create.sh. Note: mise's managed tools are NOT auto-
+  // activated in this non-interactive shell, so install steps go through
+  // `mise exec --` (e.g. `mise exec -- uv sync`).
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "remoteUser": "vscode",
+  // `mise run web` builds dist/ and serves it for the Pyodide browser version.
+  "forwardPorts": [8000],
+  "portsAttributes": {
+    "8000": {
+      "label": "web (pyodide)",
+      "onAutoForward": "notify"
+    }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "charliermarsh.ruff",
+        "dbaeumer.vscode-eslint",
+        "esbenp.prettier-vscode"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "${containerWorkspaceFolder}/.venv/bin/python",
+        "editor.formatOnSave": true,
+        "[python]": {
+          "editor.defaultFormatter": "charliermarsh.ruff",
+          "editor.codeActionsOnSave": {
+            "source.organizeImports": "explicit"
+          }
+        },
+        // Prettier owns everything the browser app is written in.
+        "[typescript][javascript][json][jsonc][html][css][markdown]": {
+          "editor.defaultFormatter": "esbenp.prettier-vscode"
+        }
+      }
+    }
+  }
+}

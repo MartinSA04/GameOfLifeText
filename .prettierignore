@@ -1,0 +1,9 @@
+dist/
+node_modules/
+.venv/
+.pytest_cache/
+.ruff_cache/
+profiling/
+uv.lock
+package-lock.json
+.devcontainer/devcontainer-lock.json

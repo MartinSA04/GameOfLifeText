@@ -99,9 +99,7 @@ def test_pack_block_plans_tries_fallback_outward_direction(
             # The second origin's translated cells coincide with the first
             # origin's master cell, so the pair-check fails and the planner
             # falls back to the secondary orientation.
-            cells = frozenset(
-                {text_module._pack_point(0, 0), text_module._pack_point(10, -1)}
-            )
+            cells = frozenset({text_module._pack_point(0, 0), text_module._pack_point(10, -1)})
         else:
             cells = frozenset({text_module._pack_point(200, 0)})
         shadow = text_module._expand_packed_with_adjacency(cells)

@@ -1,0 +1,9 @@
+{
+  "features": {
+    "ghcr.io/martinsa04/devcontainer-base/mise-and-tools:1": {
+      "version": "1.2.0",
+      "resolved": "ghcr.io/martinsa04/devcontainer-base/mise-and-tools@sha256:81deace83aeab00ba2c617ef8982962f4f84719f1630c3bf71697220dc249612",
+      "integrity": "sha256:81deace83aeab00ba2c617ef8982962f4f84719f1630c3bf71697220dc249612"
+    }
+  }
+}

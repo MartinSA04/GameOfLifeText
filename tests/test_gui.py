@@ -462,13 +462,13 @@ def test_gui_can_export_generated_plan_as_xy_pairs(
 
         QTest.mouseClick(window.export_button, Qt.MouseButton.LeftButton)
 
+        board = window.current_board
+        assert board is not None
+
         plan = render_text_block_construction("I")
-        expected_cells = center_construction(window.current_board.config, plan)
+        expected_cells = center_construction(board.config, plan)
         expected_lines = [
-            (
-                "# board_size="
-                f"{window.current_board.config.width},{window.current_board.config.height}"
-            ),
+            f"# board_size={board.config.width},{board.config.height}",
             *(f"{x},{y}" for x, y in expected_cells),
         ]
 

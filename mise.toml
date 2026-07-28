@@ -1,0 +1,68 @@
+# Toolchain for the dev container. `mise install` (run from post-create.sh)
+# provisions these. Only uv is pinned here: the Python version stays in
+# .python-version, which uv reads and provisions itself, so there is one source
+# of truth for the interpreter. Node is dev-only tooling (vitest, eslint,
+# prettier); the browser app itself ships as plain ES modules with no bundler.
+[tools]
+uv = "latest"
+node = "22"
+
+[tasks.test]
+description = "Run the Python test suite"
+run = "uv run pytest"
+
+[tasks."test:web"]
+description = "Run the browser-app unit tests"
+run = "npm test"
+
+[tasks.lint]
+description = "Lint and check formatting (Python)"
+run = ["uv run ruff check", "uv run ruff format --check"]
+
+[tasks."lint:web"]
+description = "Lint and check formatting (TS, CSS, HTML, Markdown)"
+run = ["npm run lint", "npm run format:check", "npm run lint:md"]
+
+[tasks.fmt]
+description = "Auto-format and apply lint fixes"
+run = [
+  "uv run ruff format",
+  "uv run ruff check --fix",
+  "npm run format",
+  "npm run lint -- --fix",
+]
+
+[tasks.typecheck]
+description = "Static type check (Python)"
+run = "uv run ty check"
+
+[tasks."typecheck:web"]
+description = "Static type check (TypeScript: page, worker, tests)"
+run = "npm run typecheck"
+
+[tasks.build]
+description = "Assemble the browser bundle in dist/"
+run = "npm run build"
+
+[tasks.check]
+description = "Run every lint, typecheck, test, and the bundle build"
+depends = [
+  "lint",
+  "lint:web",
+  "typecheck",
+  "typecheck:web",
+  "test",
+  "test:web",
+  "build",
+]
+
+[tasks.gui]
+description = "Launch the PySide6 GUI (needs the X11 socket mount)"
+run = "uv run gol-gui"
+
+[tasks.web]
+description = "Build the browser bundle and serve it on :8000"
+run = [
+  "npm run build",
+  "uv run --no-project python -m http.server 8000 --directory dist",
+]

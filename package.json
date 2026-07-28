@@ -1,0 +1,29 @@
+{
+  "name": "game-of-life-text-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Browser build of game-of-life-text: TypeScript compiled straight to ES modules, no bundler.",
+  "license": "MIT",
+  "scripts": {
+    "build": "uv run --no-project python scripts/build_web.py && tsc -p tsconfig.json && tsc -p tsconfig.worker.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.worker.json --noEmit && tsc -p tsconfig.test.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint .",
+    "lint:md": "markdownlint-cli2",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^26.1.2",
+    "eslint": "^10.8.0",
+    "globals": "^16.0.0",
+    "markdownlint-cli2": "^0.23.2",
+    "prettier": "^3.0.0",
+    "typescript": "^5.6.0",
+    "typescript-eslint": "^8.65.0",
+    "vitest": "^3.0.0"
+  }
+}

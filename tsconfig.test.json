@@ -1,0 +1,12 @@
+{
+  // Type-checking only: vitest transpiles the tests itself and never emits.
+  // The worker is left out here — it is checked by tsconfig.worker.json, under
+  // the WebWorker lib.
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "rootDir": ".",
+    "types": ["node"]
+  },
+  "include": ["web/src/**/*.ts", "web/types/**/*.d.ts", "tests/web/**/*.ts", "vitest.config.ts"]
+}
