@@ -33,6 +33,8 @@ PACKAGE_ROOT = REPO_ROOT / "src" / PACKAGE_NAME
 SITE_FILES = (
     "index.html",
     "styles.css",
+    "newsreader.woff2",
+    "newsreader.LICENSE.txt",
     "favicon.svg",
     "apple-touch-icon.png",
     "icon-192.png",

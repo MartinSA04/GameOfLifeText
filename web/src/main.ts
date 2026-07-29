@@ -1,5 +1,5 @@
-import type { Camera, Size, Vector } from "./camera.js";
-import { cellAt, center, fit, pan, zoomAt } from "./camera.js";
+import type { Box, Camera, Size, Vector } from "./camera.js";
+import { cellAt, center, fitBox, pan, zoomAt } from "./camera.js";
 import type { Engine } from "./engine.js";
 import { createEngine } from "./engine.js";
 import type { Grid } from "./life.js";
@@ -8,6 +8,7 @@ import {
   createGrid,
   createStepper,
   gridToPoints,
+  liveBounds,
   pointsToGrid,
   randomGrid,
   type Stepper
@@ -17,6 +18,7 @@ import { toRle } from "./rle.js";
 
 type Mode = "text" | "random" | "blank";
 type View = "board" | "target";
+type Theme = "dark" | "light";
 
 const MIN_DIMENSION = 8;
 const MAX_DIMENSION = 500;
@@ -31,8 +33,7 @@ const element = <T extends HTMLElement>(id: string): T => {
 };
 
 const ui = {
-  engine: element("engine"),
-  engineLabel: element("engine-label"),
+  theme: element<HTMLButtonElement>("theme"),
   boot: element("boot"),
   bootLabel: element("boot-label"),
   canvas: element<HTMLCanvasElement>("canvas"),
@@ -161,11 +162,6 @@ function setError(text = "") {
   ui.error.hidden = !text;
 }
 
-function setEngineState(kind: "loading" | "ready" | "error", label: string) {
-  ui.engine.dataset.state = kind;
-  ui.engineLabel.textContent = label;
-}
-
 function draw() {
   renderer.draw({
     board: state.board,
@@ -175,9 +171,53 @@ function draw() {
   });
 }
 
+/**
+ * Switch theme. The board's colors live in the stylesheet, so the renderer has
+ * to be told to read them again; `remember` is false for the system following
+ * the OS, which must not look like a choice the user made.
+ */
+function setTheme(theme: Theme, remember = true) {
+  document.documentElement.dataset.theme = theme;
+  const other: Theme = theme === "dark" ? "light" : "dark";
+  ui.theme.textContent = other;
+  ui.theme.setAttribute("aria-label", `switch to the ${other} theme`);
+  if (remember) {
+    try {
+      localStorage.setItem("theme", theme);
+    } catch {
+      // Private browsing can refuse storage; the switch still works this visit.
+    }
+  }
+  renderer.reread();
+  draw();
+}
+
+const currentTheme = (): Theme =>
+  document.documentElement.dataset.theme === "light" ? "light" : "dark";
+
+/** Everything worth looking at: what is on screen, plus the ghost under it. */
+function contentBox(): Box | null {
+  const { width, height } = state.board;
+  const shown = visibleGrid();
+  const ghost = state.ghost && state.view === "board" ? state.target : null;
+  const boxes = [shown, ghost]
+    .filter((grid): grid is Grid => grid !== null)
+    .map((grid) => liveBounds(grid, width, height))
+    .filter((box): box is Box => box !== null);
+  if (!boxes.length) return null;
+
+  const left = Math.min(...boxes.map((box) => box.x));
+  const top = Math.min(...boxes.map((box) => box.y));
+  const right = Math.max(...boxes.map((box) => box.x + box.width));
+  const bottom = Math.max(...boxes.map((box) => box.y + box.height));
+  // A cell of air on each side, so nothing sits against the edge.
+  return { x: left - 1, y: top - 1, width: right - left + 2, height: bottom - top + 2 };
+}
+
 function fitBoard() {
-  if (!state.board.width) return;
-  state.camera = fit(state.board, viewport());
+  const { width, height } = state.board;
+  if (!width) return;
+  state.camera = fitBox(contentBox() ?? { x: 0, y: 0, width, height }, viewport());
 }
 
 /** Drive the one progress bar, which planning and settling take turns owning. */
@@ -254,7 +294,13 @@ function advance() {
   state.live = state.stepper(state.cells, state.scratch);
   [state.cells, state.scratch] = [state.scratch, state.cells];
   state.generation += 1;
-  if (state.settle && state.generation === state.settle) setStatus("settled");
+  // The construction is finished and every cell of it is a still life, so
+  // there is nothing left to watch: stop on the generation it settles. The
+  // camera stays where it was, so the text is seen at the size it was built.
+  if (state.settle && state.generation === state.settle) {
+    setStatus("settled");
+    setRunning(false);
+  }
   syncStats();
   draw();
 }
@@ -309,7 +355,7 @@ async function generate() {
     (character) => character !== "\n" && !engine.supported.includes(character)
   );
   if (unsupported) {
-    setError(`no glyph for ${JSON.stringify(unsupported)}`);
+    setError(`the 5x7 font has no glyph for ${JSON.stringify(unsupported)}. remove it to build.`);
     return;
   }
 
@@ -317,6 +363,7 @@ async function generate() {
   setRunning(false);
   state.planning = true;
   ui.generate.disabled = true;
+  ui.generate.dataset.busy = "";
   ui.generate.textContent = "planning";
   setStatus("planning glider collisions");
   // The planner reports one step per block, and the first report only arrives
@@ -346,7 +393,8 @@ async function generate() {
   } finally {
     state.planning = false;
     ui.generate.disabled = false;
-    ui.generate.textContent = "generate";
+    delete ui.generate.dataset.busy;
+    ui.generate.textContent = "build";
     syncControls();
   }
 }
@@ -364,7 +412,9 @@ function buildBoard() {
 
   setError();
   setBoard({ width, height, cells, wrap: ui.wrap.checked });
-  setStatus(random ? `random fill, seed ${ui.seed.value}` : "empty board, press d to draw");
+  setStatus(
+    random ? `random fill, seed ${ui.seed.value}` : "empty board, switch on draw to fill it"
+  );
 }
 
 function setMode(mode: Mode) {
@@ -446,6 +496,12 @@ function zoom(factor: number, anchor?: Vector) {
   draw();
 }
 
+/** Grow the field with the text, so a multi-line word is visible as typed. */
+function fitTextInput() {
+  ui.textInput.style.height = "auto";
+  ui.textInput.style.height = `${ui.textInput.scrollHeight + 2}px`;
+}
+
 const TYPING = new Set(["INPUT", "TEXTAREA"]);
 
 function onKeyDown(event: KeyboardEvent) {
@@ -486,8 +542,23 @@ function bind() {
     radio.addEventListener("change", () => setMode(radio.value as Mode));
   }
 
+  ui.theme.addEventListener("click", () => {
+    setTheme(currentTheme() === "dark" ? "light" : "dark");
+  });
+  // Follow the system until the user picks a side, then stop.
+  matchMedia("(prefers-color-scheme: light)").addEventListener("change", (event) => {
+    let chosen: string | null = null;
+    try {
+      chosen = localStorage.getItem("theme");
+    } catch {
+      // No storage means no stored choice to respect.
+    }
+    if (!chosen) setTheme(event.matches ? "light" : "dark", false);
+  });
+
   ui.textInput.addEventListener("input", () => {
     ui.textCount.textContent = `${ui.textInput.value.length}/${TEXT_LIMIT}`;
+    fitTextInput();
   });
   ui.textInput.addEventListener("keydown", (event) => {
     if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) void generate();
@@ -576,26 +647,30 @@ function bind() {
 
 async function start() {
   bind();
+  // The head script picked the theme; this labels the switch to match it.
+  setTheme(currentTheme(), false);
   renderer.resize(viewport());
   requestAnimationFrame(frame);
+  fitTextInput();
   syncControls();
 
   try {
     state.engine = await createEngine({
       onStatus: (label) => {
-        setEngineState("loading", label);
         ui.bootLabel.textContent = label;
       }
     });
-    setEngineState("ready", "python ready");
     ui.boot.hidden = true;
-    // Land on something to look at, unless the wait was spent elsewhere.
-    if (state.mode === "text") await generate();
+    // Land on something to look at, unless the wait was spent elsewhere. The
+    // first construction plays itself: the point of the page is the assembly.
+    if (state.mode === "text") {
+      await generate();
+      if (state.target && !matchMedia("(prefers-reduced-motion: reduce)").matches) setRunning(true);
+    }
   } catch (error: unknown) {
     console.error(error);
-    setEngineState("error", "python failed");
     ui.bootLabel.textContent = "python failed to load";
-    setError("the python engine could not load. check your connection and reload.");
+    setError("the python planner could not load. check your connection and reload the page.");
     setStatus("no engine");
   }
 }

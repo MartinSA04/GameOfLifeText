@@ -36,9 +36,17 @@ export interface CellRange {
   y1: number;
 }
 
+/** A rectangle of cells on the board. */
+export interface Box extends Size {
+  x: number;
+  y: number;
+}
+
 const MIN_PADDING = 16;
 const MAX_PADDING = 42;
 const MIN_SCALE = 0.05;
+// A handful of cells should not fill the screen, however small the region is.
+const MAX_FIT_SCALE = 24;
 const ZOOM_OUT_LIMIT = 0.35;
 const ZOOM_IN_LIMIT = 18;
 
@@ -53,17 +61,28 @@ export function center(camera: Camera, board: Size, viewport: Size): Camera {
   };
 }
 
+/** Scale a region of the board into the viewport with a margin, and center it. */
+export function fitBox(box: Box, viewport: Size): Camera {
+  const padding = clamp(viewport.width * 0.04, MIN_PADDING, MAX_PADDING);
+  const scale = clamp(
+    Math.min(
+      (viewport.width - padding * 2) / box.width,
+      (viewport.height - padding * 2) / box.height
+    ),
+    MIN_SCALE,
+    MAX_FIT_SCALE
+  );
+  return {
+    scale,
+    fitted: scale,
+    x: (viewport.width - box.width * scale) / 2 - box.x * scale,
+    y: (viewport.height - box.height * scale) / 2 - box.y * scale
+  };
+}
+
 /** Scale the whole board into the viewport with a margin, and center it. */
 export function fit(board: Size, viewport: Size): Camera {
-  const padding = clamp(viewport.width * 0.04, MIN_PADDING, MAX_PADDING);
-  const scale = Math.max(
-    MIN_SCALE,
-    Math.min(
-      (viewport.width - padding * 2) / board.width,
-      (viewport.height - padding * 2) / board.height
-    )
-  );
-  return center({ scale, fitted: scale, x: 0, y: 0 }, board, viewport);
+  return fitBox({ x: 0, y: 0, width: board.width, height: board.height }, viewport);
 }
 
 /** Zoom about a viewport point, keeping the cell under it in place. */

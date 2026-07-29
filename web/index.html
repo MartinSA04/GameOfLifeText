@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>Game of Life text, built from colliding gliders</title>
     <meta
       name="description"
@@ -11,8 +11,22 @@
     <link rel="canonical" href="https://conway.martinsundal.no/" />
     <meta name="robots" content="index, follow, max-image-preview:large, max-snippet:-1" />
     <meta name="author" content="Martin Sundal Aspås" />
-    <meta name="color-scheme" content="dark" />
-    <meta name="theme-color" content="#070a08" />
+    <meta name="color-scheme" content="dark light" />
+    <meta name="theme-color" content="#0e1210" media="(prefers-color-scheme: dark)" />
+    <meta name="theme-color" content="#f9faf8" media="(prefers-color-scheme: light)" />
+
+    <script>
+      // Stamped before the first paint: a stored theme must not flash the other
+      // one, and the stylesheet then carries the light palette only once.
+      try {
+        const stored = localStorage.getItem("theme");
+        const system = matchMedia("(prefers-color-scheme: light)").matches ? "light" : "dark";
+        document.documentElement.dataset.theme =
+          stored === "light" || stored === "dark" ? stored : system;
+      } catch {
+        document.documentElement.dataset.theme = "dark";
+      }
+    </script>
 
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="game_of_life_text" />
@@ -47,6 +61,7 @@
     <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
     <link rel="manifest" href="./site.webmanifest" />
     <link rel="stylesheet" href="./styles.css" />
+    <link rel="preload" href="./newsreader.woff2" as="font" type="font/woff2" crossorigin />
 
     <!-- the worker pulls Pyodide from here, so open the connection while the page paints -->
     <link rel="preconnect" href="https://cdn.jsdelivr.net" crossorigin />
@@ -114,114 +129,74 @@
     </script>
   </head>
   <body>
-    <a class="skip" href="#stage">skip to board</a>
+    <a class="skip" href="#stage">skip to the board</a>
 
     <header class="topbar">
       <div class="brand">
         <span class="glider" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i></span>
         <h1>game_of_life_text</h1>
       </div>
-      <div class="topbar-meta">
-        <p class="engine" id="engine" data-state="loading" role="status" aria-live="polite">
-          <span class="led" aria-hidden="true"></span><span id="engine-label">booting python</span>
-        </p>
-        <a href="https://github.com/MartinSA04/GameOfLifeText" rel="noreferrer">github</a>
-      </div>
+      <nav class="links">
+        <a class="to-how" href="#how">how it works</a>
+        <a href="https://github.com/MartinSA04/GameOfLifeText" rel="noreferrer">source</a>
+        <button class="theme" id="theme" type="button">light</button>
+      </nav>
     </header>
 
     <main>
-      <div class="layout">
-        <aside class="rail" aria-label="controls">
-          <fieldset class="panel">
-            <legend>seed</legend>
-            <div class="segmented">
-              <input type="radio" name="mode" id="mode-text" value="text" checked />
-              <label for="mode-text">text</label>
-              <input type="radio" name="mode" id="mode-random" value="random" />
-              <label for="mode-random">random</label>
-              <input type="radio" name="mode" id="mode-blank" value="blank" />
-              <label for="mode-blank">blank</label>
-            </div>
-          </fieldset>
+      <section class="console">
+        <div class="seedbar">
+          <div class="segmented">
+            <input type="radio" name="mode" id="mode-text" value="text" checked />
+            <label for="mode-text">word</label>
+            <input type="radio" name="mode" id="mode-random" value="random" />
+            <label for="mode-random">random</label>
+            <input type="radio" name="mode" id="mode-blank" value="blank" />
+            <label for="mode-blank">blank</label>
+          </div>
 
-          <section class="panel" id="text-panel">
-            <label for="text-input">text</label>
-            <textarea id="text-input" rows="2" maxlength="80" spellcheck="false">life</textarea>
-            <p class="meta"><span>5x7 ascii glyphs</span><span id="text-count">4/80</span></p>
-            <button class="btn primary" id="generate" type="button" disabled>generate</button>
-          </section>
+          <div class="compose" id="text-panel">
+            <label class="micro" for="text-input">spell</label>
+            <textarea id="text-input" rows="1" maxlength="80" spellcheck="false">life</textarea>
+            <span class="count" id="text-count">4/80</span>
+            <button class="btn primary" id="generate" type="button" disabled>build</button>
+          </div>
 
-          <section class="panel" id="board-panel" hidden>
-            <div class="pair">
-              <span class="field">
-                <label for="width">width</label>
-                <input id="width" type="number" min="8" max="500" value="160" />
-              </span>
-              <span class="field">
-                <label for="height">height</label>
-                <input id="height" type="number" min="8" max="500" value="100" />
-              </span>
-            </div>
+          <div class="fields" id="board-panel" hidden>
             <span class="field">
-              <label for="density"
+              <label class="micro" for="width">width</label>
+              <input id="width" type="number" min="8" max="500" value="160" />
+            </span>
+            <span class="field">
+              <label class="micro" for="height">height</label>
+              <input id="height" type="number" min="8" max="500" value="100" />
+            </span>
+            <span class="field slider random-only">
+              <label class="micro" for="density"
                 >density <output id="density-out" for="density">20%</output></label
               >
               <input id="density" type="range" min="1" max="60" value="20" />
             </span>
-            <span class="field">
-              <label for="seed">rng seed</label>
+            <span class="field random-only">
+              <label class="micro" for="seed">rng seed</label>
               <input id="seed" type="number" value="2026" />
             </span>
             <label class="check"><input type="checkbox" id="wrap" checked /> wrap edges</label>
             <button class="btn primary" id="build" type="button">new random board</button>
-          </section>
+          </div>
+        </div>
 
-          <section class="panel">
-            <div class="triple">
-              <button class="btn" id="run" type="button">run</button>
-              <button class="btn" id="step" type="button">step</button>
-              <button class="btn" id="reset" type="button">reset</button>
-            </div>
-            <span class="field">
-              <label for="speed">speed <output id="speed-out" for="speed">12/s</output></label>
-              <input id="speed" type="range" min="1" max="60" value="12" />
-            </span>
-          </section>
-
-          <section class="panel" id="progress" hidden>
-            <label for="progress-bar"
-              ><span id="progress-name">settle</span>
-              <output id="progress-out" for="progress-bar">0/0</output></label
-            >
-            <progress id="progress-bar" value="0" max="100"></progress>
-          </section>
-
-          <p class="error" id="error" role="alert" hidden></p>
-
-          <dl class="keys">
-            <dt><kbd>space</kbd></dt>
-            <dd>run / pause</dd>
-            <dt><kbd>s</kbd></dt>
-            <dd>step</dd>
-            <dt><kbd>r</kbd></dt>
-            <dd>reset to seed</dd>
-            <dt><kbd>t</kbd></dt>
-            <dd>target / board</dd>
-            <dt><kbd>d</kbd></dt>
-            <dd>draw</dd>
-            <dt><kbd>g</kbd></dt>
-            <dd>ghost target</dd>
-            <dt><kbd>f</kbd></dt>
-            <dd>fit</dd>
-            <dt><kbd>+ -</kbd></dt>
-            <dd>zoom</dd>
-            <dt>drag</dt>
-            <dd>pan</dd>
-          </dl>
-        </aside>
+        <p class="error" id="error" role="alert" hidden></p>
 
         <section class="stage" id="stage" aria-label="board">
-          <div class="stage-bar">
+          <div class="canvas-wrap" id="canvas-wrap">
+            <canvas id="canvas" aria-label="game of life board"></canvas>
+            <p class="boot" id="boot" role="status" aria-live="polite">
+              <span id="boot-label">starting python</span>
+            </p>
+          </div>
+
+          <div class="stage-tools">
             <div class="views" id="views" hidden>
               <button class="tool" id="view-board" type="button" aria-pressed="true">board</button>
               <button class="tool" id="view-target" type="button" aria-pressed="false">
@@ -229,123 +204,193 @@
               </button>
             </div>
             <div class="tools">
-              <label class="check" id="ghost-toggle" hidden>
+              <label class="check tool-check" id="ghost-toggle" hidden>
                 <input type="checkbox" id="ghost" checked /> ghost
               </label>
               <button class="tool" id="draw" type="button" aria-pressed="false">draw</button>
-              <button class="tool" id="zoom-out" type="button" aria-label="zoom out">
-                &minus;
-              </button>
-              <button class="tool" id="fit" type="button">fit</button>
-              <button class="tool" id="zoom-in" type="button" aria-label="zoom in">+</button>
+              <span class="zoom">
+                <button class="tool" id="zoom-out" type="button" aria-label="zoom out">
+                  &minus;
+                </button>
+                <button class="tool" id="fit" type="button">fit</button>
+                <button class="tool" id="zoom-in" type="button" aria-label="zoom in">+</button>
+              </span>
               <button class="tool" id="export" type="button" disabled>export .rle</button>
             </div>
           </div>
-
-          <div class="canvas-wrap" id="canvas-wrap">
-            <canvas id="canvas" aria-label="game of life board"></canvas>
-            <p class="boot" id="boot"><span id="boot-label">booting python</span></p>
-          </div>
-
-          <div class="stage-status">
-            <span class="stat"><span>gen</span><strong id="stat-gen">0</strong></span>
-            <span class="stat"><span>live</span><strong id="stat-live">0</strong></span>
-            <span class="stat"><span>board</span><strong id="stat-size">0×0</strong></span>
-            <p id="status" aria-live="polite">waiting for python</p>
-          </div>
         </section>
-      </div>
 
-      <article class="about">
-        <h2>Words made of still lifes</h2>
-        <p>
-          Every character here comes from a 5x7 bitmap font. Each lit pixel of a glyph becomes a 2x2
-          block, the smallest still life in Conway's Game of Life, so the finished word sits on the
-          board unchanged instead of decaying the moment the simulation runs. Nothing paints those
-          blocks directly. All of them are built by gliders launched from outside the text,
-          colliding in the right place at the right time.
-        </p>
-        <p>
-          One block takes two gliders. Fire them on the right offset and four generations later they
-          have eaten each other down to a single 2x2 block. That collision is the only building
-          material in the app, and the real problem is scheduling a few hundred of them so that no
-          glider ever clips a block that is already finished, or one that is still on its way in.
-        </p>
+        <div class="transport">
+          <div class="progress" id="progress" hidden>
+            <span class="micro" id="progress-name">settle</span>
+            <progress id="progress-bar" value="0" max="100"></progress>
+            <output class="count" id="progress-out" for="progress-bar">0/0</output>
+          </div>
 
-        <h2>How the search works</h2>
-        <p>
-          Blocks are placed one at a time, sorted by distance from the centre of the text. The
-          middle of a word is the hardest place to reach once the outside is standing, so it gets
-          built first, while later gliders still have empty board to fly across.
-        </p>
-        <p>
-          Each block takes its launch direction from where it sits relative to that centre, so a
-          block up and to the right is built by gliders arriving from up and to the right. The
-          dominant axis is tried first and the other axis is kept as a fallback, which gives every
-          block two orientations to work with.
-        </p>
-        <p>
-          Then there is the delay. A glider repeats its own shape every four generations, so a
-          synthesis can be launched any whole number of periods early and still land on exactly the
-          same square, just later. The planner walks these delay slots upward from zero, trying both
-          orientations at each one, and keeps the first combination that fits. That is the whole
-          search: the smallest delay that works, the first orientation that works, no backtracking.
-          Text dense enough to exhaust the slot budget is rejected rather than approximated.
-        </p>
-        <p>
-          What keeps it quick is the test for whether a candidate fits. Re-simulating the board for
-          every candidate would be far too slow, so the planner never simulates the combination at
-          all. Instead it carries a running summary of the work already placed: every cell any
-          construction touches at every generation, and how many live neighbours each dead cell is
-          being handed at each generation. A candidate is accepted when two conditions hold.
-        </p>
-        <ul>
-          <li>
-            At every generation, each live cell of the candidate is at least two steps away from
-            every live cell already placed, measured on the Moore neighbourhood. No cell ever sees a
-            neighbour it would not have seen with its own block running alone.
-          </li>
-          <li>
-            At every dead cell being fed live neighbours by both the candidate and the placed work,
-            the combined count has to produce the same next state that each side produces on its
-            own. This is the only way two harmless patterns can turn into something new together:
-            between them they flip a cell that neither of them flips alone.
-          </li>
-        </ul>
-        <p>
-          Hold both and the two patterns laid on top of each other evolve exactly the way they
-          evolve apart, which is what lets a slot be accepted after one comparison against the
-          summary rather than a fresh run of the board. A cheap filter runs before either check: if
-          the candidate never touches a cell that any placed block touches at any generation, the
-          checks are vacuous and the slot is taken immediately.
-        </p>
-        <p>
-          Once every block has a slot the combined seed is simulated once, in full, and compared
-          against the target. If a single cell is out of place the construction is thrown away
-          instead of shown, so anything that reaches the canvas is known to settle exactly.
-        </p>
+          <div class="controls">
+            <div class="playback">
+              <button class="btn" id="run" type="button">run</button>
+              <button class="btn" id="step" type="button">step</button>
+              <button class="btn" id="reset" type="button">reset</button>
+            </div>
+            <span class="field speed">
+              <label class="micro" for="speed"
+                >speed <output id="speed-out" for="speed">12/s</output></label
+              >
+              <input id="speed" type="range" min="1" max="60" value="12" />
+            </span>
+            <div class="readout">
+              <span class="stat"
+                ><span class="micro">gen</span><strong id="stat-gen">0</strong></span
+              >
+              <span class="stat"
+                ><span class="micro">live</span><strong id="stat-live">0</strong></span
+              >
+              <span class="stat"
+                ><span class="micro">board</span><strong id="stat-size">0×0</strong></span
+              >
+            </div>
+            <p class="status" id="status" aria-live="polite">starting up</p>
+          </div>
+        </div>
 
-        <h2>Exporting patterns</h2>
-        <p>
-          The <strong>export .rle</strong> button writes the current board as Run Length Encoded
-          text, the usual interchange format for Life patterns, so a word built here opens unchanged
-          in Golly or LifeViewer. Boards can also be seeded at random or left blank and drawn on by
-          hand, with wrapping edges on or off.
-        </p>
+        <a class="readmore" href="#how">how it works <span aria-hidden="true">&darr;</span></a>
 
-        <h2>How it runs</h2>
-        <p>
-          The canvas and the simulation loop are TypeScript. The planner is the same Python package
-          that backs the desktop build, running under Pyodide in a worker thread, which is why the
-          first visit spends a moment fetching a WebAssembly runtime and NumPy before the generate
-          button lights up. After that it is cached.
-        </p>
-        <p>
-          The source, including the PySide6 desktop version, is on
-          <a href="https://github.com/MartinSA04/GameOfLifeText" rel="noreferrer">GitHub</a> under
-          the MIT licence.
-        </p>
-      </article>
+        <dl class="legend">
+          <div>
+            <dt><kbd>space</kbd></dt>
+            <dd>run / pause</dd>
+          </div>
+          <div>
+            <dt><kbd>s</kbd></dt>
+            <dd>step</dd>
+          </div>
+          <div>
+            <dt><kbd>r</kbd></dt>
+            <dd>reset to seed</dd>
+          </div>
+          <div>
+            <dt><kbd>t</kbd></dt>
+            <dd>target / board</dd>
+          </div>
+          <div>
+            <dt><kbd>d</kbd></dt>
+            <dd>draw</dd>
+          </div>
+          <div>
+            <dt><kbd>g</kbd></dt>
+            <dd>ghost target</dd>
+          </div>
+          <div>
+            <dt><kbd>f</kbd></dt>
+            <dd>fit</dd>
+          </div>
+          <div>
+            <dt><kbd>+</kbd> <kbd>&minus;</kbd></dt>
+            <dd>zoom</dd>
+          </div>
+          <div>
+            <dt>drag</dt>
+            <dd>pan</dd>
+          </div>
+        </dl>
+      </section>
+
+      <section class="writeup" id="how">
+        <article class="about">
+          <h2>Words made of still lifes</h2>
+          <p>
+            Every character here comes from a 5x7 bitmap font. Each lit pixel of a glyph becomes a
+            2x2 block, the smallest still life in Conway's Game of Life, so the finished word sits
+            on the board unchanged instead of decaying the moment the simulation runs. Nothing
+            paints those blocks directly. All of them are built by gliders launched from outside the
+            text, colliding in the right place at the right time.
+          </p>
+          <p>
+            One block takes two gliders. Fire them on the right offset and four generations later
+            they have eaten each other down to a single 2x2 block. That collision is the only
+            building material in the app, and the real problem is scheduling a few hundred of them
+            so that no glider ever clips a block that is already finished, or one that is still on
+            its way in.
+          </p>
+
+          <h2>How the search works</h2>
+          <p>
+            Blocks are placed one at a time, sorted by distance from the centre of the text. The
+            middle of a word is the hardest place to reach once the outside is standing, so it gets
+            built first, while later gliders still have empty board to fly across.
+          </p>
+          <p>
+            Each block takes its launch direction from where it sits relative to that centre, so a
+            block up and to the right is built by gliders arriving from up and to the right. The
+            dominant axis is tried first and the other axis is kept as a fallback, which gives every
+            block two orientations to work with.
+          </p>
+          <p>
+            Then there is the delay. A glider repeats its own shape every four generations, so a
+            synthesis can be launched any whole number of periods early and still land on exactly
+            the same square, just later. The planner walks these delay slots upward from zero,
+            trying both orientations at each one, and keeps the first combination that fits. That is
+            the whole search: the smallest delay that works, the first orientation that works, no
+            backtracking. Text dense enough to exhaust the slot budget is rejected rather than
+            approximated.
+          </p>
+          <p>
+            What keeps it quick is the test for whether a candidate fits. Re-simulating the board
+            for every candidate would be far too slow, so the planner never simulates the
+            combination at all. Instead it carries a running summary of the work already placed:
+            every cell any construction touches at every generation, and how many live neighbours
+            each dead cell is being handed at each generation. A candidate is accepted when two
+            conditions hold.
+          </p>
+          <ul>
+            <li>
+              At every generation, each live cell of the candidate is at least two steps away from
+              every live cell already placed, measured on the Moore neighbourhood. No cell ever sees
+              a neighbour it would not have seen with its own block running alone.
+            </li>
+            <li>
+              At every dead cell being fed live neighbours by both the candidate and the placed
+              work, the combined count has to produce the same next state that each side produces on
+              its own. This is the only way two harmless patterns can turn into something new
+              together: between them they flip a cell that neither of them flips alone.
+            </li>
+          </ul>
+          <p>
+            Hold both and the two patterns laid on top of each other evolve exactly the way they
+            evolve apart, which is what lets a slot be accepted after one comparison against the
+            summary rather than a fresh run of the board. A cheap filter runs before either check:
+            if the candidate never touches a cell that any placed block touches at any generation,
+            the checks are vacuous and the slot is taken immediately.
+          </p>
+          <p>
+            Once every block has a slot the combined seed is simulated once, in full, and compared
+            against the target. If a single cell is out of place the construction is thrown away
+            instead of shown, so anything that reaches the canvas is known to settle exactly.
+          </p>
+
+          <h2>Exporting patterns</h2>
+          <p>
+            The <strong>export .rle</strong> button writes the current board as Run Length Encoded
+            text, the usual interchange format for Life patterns, so a word built here opens
+            unchanged in Golly or LifeViewer. Boards can also be seeded at random or left blank and
+            drawn on by hand, with wrapping edges on or off.
+          </p>
+
+          <h2>How it runs</h2>
+          <p>
+            The canvas and the simulation loop are TypeScript. The planner is the same Python
+            package that backs the desktop build, running under Pyodide in a worker thread, which is
+            why the first visit spends a moment fetching a WebAssembly runtime and NumPy before the
+            build button lights up. After that it is cached.
+          </p>
+          <p>
+            The source, including the PySide6 desktop version, is on
+            <a href="https://github.com/MartinSA04/GameOfLifeText" rel="noreferrer">GitHub</a> under
+            the MIT licence.
+          </p>
+        </article>
+      </section>
     </main>
 
     <noscript>

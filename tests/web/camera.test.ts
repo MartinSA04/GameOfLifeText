@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { Camera, Size } from "../../web/src/camera.js";
-import { cellAt, center, fit, pan, visibleRange, zoomAt } from "../../web/src/camera.js";
+import { cellAt, center, fit, fitBox, pan, visibleRange, zoomAt } from "../../web/src/camera.js";
 
 const BOARD: Size = { width: 100, height: 50 };
 const VIEWPORT: Size = { width: 800, height: 600 };
@@ -30,6 +30,27 @@ describe("fit", () => {
     const camera = fit({ width: 10, height: 1000 }, VIEWPORT);
 
     expect(camera.scale * 1000).toBeLessThanOrEqual(VIEWPORT.height);
+  });
+});
+
+describe("fitBox", () => {
+  it("centers a region of the board, not the board", () => {
+    const camera = fitBox({ x: 60, y: 30, width: 20, height: 10 }, VIEWPORT);
+
+    // The middle of the box lands in the middle of the viewport.
+    expect(camera.x + 70 * camera.scale).toBeCloseTo(VIEWPORT.width / 2);
+    expect(camera.y + 35 * camera.scale).toBeCloseTo(VIEWPORT.height / 2);
+  });
+
+  it("zooms in on a region the whole board would have shrunk", () => {
+    const board = fit(BOARD, VIEWPORT);
+    const region = fitBox({ x: 10, y: 10, width: 12, height: 6 }, VIEWPORT);
+
+    expect(region.scale).toBeGreaterThan(board.scale);
+  });
+
+  it("stops a handful of cells from filling the screen", () => {
+    expect(fitBox({ x: 0, y: 0, width: 1, height: 1 }, VIEWPORT).scale).toBeLessThanOrEqual(24);
   });
 });
 
