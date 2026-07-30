@@ -7,6 +7,7 @@ import {
   createGrid,
   createStepper,
   gridToPoints,
+  liveBounds,
   mulberry32,
   pointsToGrid,
   randomGrid,
@@ -141,6 +142,25 @@ describe("randomGrid", () => {
 
   it("lands near the requested density", () => {
     expect(countLive(randomGrid(200, 200, 0.25, 99)) / 40000).toBeCloseTo(0.25, 2);
+  });
+});
+
+describe("liveBounds", () => {
+  it("boxes the live cells and nothing else", () => {
+    const points: Point[] = [
+      [1, 2],
+      [4, 3]
+    ];
+    expect(liveBounds(pointsToGrid(points, WIDTH, HEIGHT), WIDTH, HEIGHT)).toEqual({
+      x: 1,
+      y: 2,
+      width: 4,
+      height: 2
+    });
+  });
+
+  it("has nothing to box on an empty grid", () => {
+    expect(liveBounds(createGrid(WIDTH, HEIGHT), WIDTH, HEIGHT)).toBeNull();
   });
 });
 

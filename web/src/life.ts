@@ -4,6 +4,7 @@
  * uses to actually evolve a board.
  */
 
+import type { Box } from "./camera.js";
 import type { Point } from "../types/protocol.js";
 
 export type Grid = Uint8Array;
@@ -33,6 +34,29 @@ export function gridToPoints(grid: Grid, width: number): Point[] {
     if (grid[index]) points.push([index % width, Math.floor(index / width)]);
   }
   return points;
+}
+
+/**
+ * The smallest box holding every live cell, or null on an empty grid. Boards
+ * carry a lot of empty margin, so this is what the camera frames rather than
+ * the board itself.
+ */
+export function liveBounds(grid: Grid, width: number, height: number): Box | null {
+  let left = width;
+  let right = -1;
+  let top = height;
+  let bottom = -1;
+  for (let index = 0; index < grid.length; index += 1) {
+    if (!grid[index]) continue;
+    const x = index % width;
+    const y = (index - x) / width;
+    if (x < left) left = x;
+    if (x > right) right = x;
+    if (y < top) top = y;
+    if (y > bottom) bottom = y;
+  }
+  if (right < 0) return null;
+  return { x: left, y: top, width: right - left + 1, height: bottom - top + 1 };
 }
 
 export function countLive(grid: Grid): number {

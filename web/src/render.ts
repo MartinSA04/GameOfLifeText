@@ -18,6 +18,8 @@ export interface Renderer {
   /** Match the backing store to the element size; returns the CSS viewport. */
   resize(viewport: Size): Size;
   draw(frame: Frame): void;
+  /** Forget the palette, so the next draw reads the stylesheet again. */
+  reread(): void;
 }
 
 interface Palette {
@@ -25,6 +27,8 @@ interface Palette {
   cell: string;
   ghost: string;
   grid: string;
+  /** How much of the halo under each cell to keep; a lit board wants more. */
+  bloom: number;
 }
 
 interface PaintOptions {
@@ -35,7 +39,6 @@ interface PaintOptions {
 
 const GRID_SCALE = 9;
 const BLOOM_SCALE = 3;
-const BLOOM_ALPHA = 0.22;
 const CELL_GAP_SCALE = 5;
 const MAX_DEVICE_RATIO = 2;
 
@@ -47,7 +50,8 @@ function palette(): Palette | null {
     canvas: read("--canvas"),
     cell: read("--cell"),
     ghost: read("--cell-ghost"),
-    grid: read("--canvas-grid")
+    grid: read("--canvas-grid"),
+    bloom: Number(read("--cell-bloom"))
   };
   return colors.cell ? colors : null;
 }
@@ -109,6 +113,10 @@ export function createRenderer(canvas: HTMLCanvasElement): Renderer {
   }
 
   return {
+    reread() {
+      colors = null;
+    },
+
     resize(next) {
       viewport = next;
       const ratio = Math.min(window.devicePixelRatio || 1, MAX_DEVICE_RATIO);
@@ -134,10 +142,10 @@ export function createRenderer(canvas: HTMLCanvasElement): Renderer {
       const range = visibleRange(camera, board, viewport);
       if (camera.scale >= GRID_SCALE) paintGrid(camera, range, colors.grid);
       if (ghost) paint(ghost, board, camera, range, { color: colors.ghost });
-      if (camera.scale >= BLOOM_SCALE) {
+      if (camera.scale >= BLOOM_SCALE && colors.bloom > 0) {
         paint(cells, board, camera, range, {
           color: colors.cell,
-          alpha: BLOOM_ALPHA,
+          alpha: colors.bloom,
           inflate: 2
         });
       }
